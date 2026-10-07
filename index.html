@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Price list</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body data-view="prices">
+<div id="toast"></div>
+<header>
+  <h1>Price list</h1>
+  <div class="hdr-actions">
+    <span id="dirty" class="dirty" hidden="">Unsaved changes</span>
+    <button class="btn" id="saveBtn" hidden="">Save page</button>
+    <button class="btn ghost" id="logBtn">Show log</button>
+    <button class="btn ghost" id="editBtn">Edit</button>
+  </div>
+</header>
+<nav class="tabs" id="tabs" aria-label="Views">
+  <button class="tab on" data-view="prices">Price list</button>
+  <button class="tab" data-view="projects">Examples</button>
+</nav>
+<div class="layout">
+  <main>
+    <div class="filters">
+      <div class="row" id="tierRow"><span class="lbl">Tier</span><div class="chips" id="tiers" role="group" aria-label="Tier"></div></div>
+      <div class="row"><span class="lbl">Technology</span><div class="chips" id="techs" role="group" aria-label="Technology"></div></div>
+      <div class="row"><span class="lbl">Search</span><input type="search" id="q" placeholder="Filter services"></div>
+    </div>
+    <div class="editbar" id="editbar" hidden="">
+      <button class="btn" id="addSvc">+ Add service</button>
+      <button class="btn ghost" id="exportCsv">Export CSV</button>
+      <button class="btn ghost" id="exportExcel">Export Excel</button>
+      <span class="note">Edit any cell, then Save page to write the changes into the HTML file.</span>
+    </div>
+    <datalist id="techlist"></datalist><datalist id="unitlist"></datalist>
+    <div id="tbl"></div>
+  </main>
+  <aside aria-label="Selected items">
+    <div id="cart"></div>
+  </aside>
+</div>
+<section class="projects" id="projects" hidden="">
+  <div class="ptop">
+    <div class="seg" id="projMode" role="group" aria-label="Examples mode"><button data-pm="show" aria-pressed="true" class="on">Show</button><button data-pm="edit" class="" aria-pressed="false">Edit</button></div>
+    <button class="btn" id="addProj" hidden="">+ Add card</button></div>
+  <div class="projgrid show" id="projgrid"></div>
+</section>
+<section class="logpage" id="logpage" hidden="">
+  <div class="logtop"><h2>Edit log <span class="note" id="logcount">0 edits</span></h2>
+    <button class="btn ghost" id="logCsv">Export CSV</button>
+    <button class="btn ghost" id="clearLog" style="color:var(--warn);border-color:var(--warn);">Clear log</button></div>
+  <div id="logtbl"></div>
+</section>
+
+
+<script src="app.js"></script>
+
+
+</body></html>
