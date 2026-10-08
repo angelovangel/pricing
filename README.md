@@ -1,53 +1,72 @@
 # Pricing
 
-## Run
+## Setup and run
 
-Requires Python 3. Start the server from the project directory:
+Requires Python 3. From the project directory, install dependencies, configure
+Google Sheets access, and start the server:
 
 ```sh
+python3 -m pip install -r requirements.txt
+export GOOGLE_APPLICATION_CREDENTIALS="/absolute/path/to/service-account-key.json"
 python3 server.py
 ```
 
-Open `http://localhost:3811/`. The editable page requires credentials from
-`secrets.csv`, with one `username,password` pair per line.
+Replace the example credentials path with the actual absolute path to the
+service-account JSON key. The key should be stored securely and kept out of
+source control.
 
-## Data files
+Open `http://localhost:3811/`. The editable page prompts for credentials from
+`secrets.csv`, which should contain one `username,password` pair per line.
+Create this file in the project directory.
 
-Both files belong in `data/`.
+## Google Sheets
 
-`pricing_data.csv` is UTF-8 CSV with a header row and one service per row:
+Pricing data is read from and saved to Google Sheets; the server does not use
+`data/pricing_data.csv` as its live data source. The default spreadsheet ID is
+`19ByaGb1-X7Z_6_Dwhba1Efn78EQ2Ue9n9uXdAIHCk-U`, and the default tab is
+`Sheet1`. Configure a different spreadsheet or tab with
+`GOOGLE_SPREADSHEET_ID` or `GOOGLE_SHEET_NAME`.
 
-```csv
-"Service","Technology","Unit","Tier1","Tier2","Rate_card"
-"Capillary Sequencing","Sanger","per sample",4.55,5.05,"true"
-```
+To authorize the server:
 
-The first three columns must be `Service`, `Technology`, and `Unit`. Following
-columns are price tiers; names become the tier labels shown in the page. Leave
-a price cell empty when that service is unavailable in a tier. An optional
-`Rate_card` column marks a row as part of the rate card (`true` or `false`); it
-defaults to `true` when omitted.
+1. Enable the Google Sheets API in Google Cloud and create a service account.
+2. Create a JSON key for the service account and store it securely on the
+   machine running the server.
+3. Share the spreadsheet with the service account email address as an Editor.
+   Keep the spreadsheet private; the server uses the service-account key to
+   access it.
+4. Set `GOOGLE_APPLICATION_CREDENTIALS` to the key's absolute path before
+   starting the server, as shown in the setup commands above.
 
-`data.json` stores edit logs and example cards as a JSON object:
+The sheet's first row must start with `Service`, `Technology`, and `Unit`,
+followed by one or more price-tier columns. An optional `Rate_card` column
+accepts `true` or `false`; blank price cells mean the service is unavailable
+in that tier.
+
+## Local application state
+
+Create `data/data.json` in the project directory. It stores edit logs and
+example cards, independently of the pricing Sheet:
 
 ```json
 {
-  "log": [
-  ],
-  "projects": [
-  ]
+  "log": [],
+  "projects": []
 }
 ```
 
-Both `log` and `projects` may be empty arrays initially.
+The data directory is git-ignored, so provide this file separately when
+deploying.
 
-## Deploy
+## Deployment and access
 
-Deploy and add `data.json` and `pricing_data.csv` in the `data/` directory. 
-The data files and `secrets.csv` are git-ignored, so provide
-them separately. Run `python3 server.py` from the project directory; it listens
-on port 3811.
+Provide `secrets.csv`, `data/data.json`, and the service-account key separately;
+do not commit credentials or private data. Install dependencies and set
+`GOOGLE_APPLICATION_CREDENTIALS` in the server environment, then run
+`python3 server.py` from the project directory. The server listens on port
+3811.
 
-Use a TLS-terminating reverse proxy when exposing the service outside a trusted
-network. The built-in server uses HTTP Basic Authentication and does not provide
-HTTPS itself. `/view/` is a public, read-only view.
+The editable page requires HTTP Basic Authentication. `/view/` is a public,
+read-only page, and its pricing data is publicly readable through the app.s
+The built-in server does not provide HTTPS; use a TLS-terminating reverse proxy
+when exposing it outside a trusted network.
