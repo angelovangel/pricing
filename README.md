@@ -7,22 +7,21 @@ Google Sheets access, and start the server:
 
 ```sh
 python3 -m pip install -r requirements.txt
-export GOOGLE_APPLICATION_CREDENTIALS="/absolute/path/to/service-account-key.json"
+export GOOGLE_APPLICATION_CREDENTIALS="/absolute/path/to/project/secrets/key.json"
 python3 server.py
 ```
 
-Replace the example credentials path with the actual absolute path to the
-service-account JSON key. The key should be stored securely and kept out of
-source control.
+Keep private files in the project-level `secrets/` directory, which is ignored
+by Git. Set `GOOGLE_APPLICATION_CREDENTIALS` to the absolute path of the
+service-account JSON key in that directory.
 
 Open `http://localhost:3811/`. The editable page prompts for credentials from
-`secrets.csv`, which should contain one `username,password` pair per line.
-Create this file in the project directory.
+`secrets/secrets.csv`, which should contain one `username,password` pair per
+line. Create this file in the `secrets/` directory.
 
 ## Google Sheets
 
-Pricing data is read from and saved to Google Sheets; the server does not use
-`data/pricing_data.csv` as its live data source. The default spreadsheet ID is
+Pricing data is read from and saved to Google Sheets. The default spreadsheet ID is
 `19ByaGb1-X7Z_6_Dwhba1Efn78EQ2Ue9n9uXdAIHCk-U`, and the default tab is
 `Sheet1`. Configure a different spreadsheet or tab with
 `GOOGLE_SPREADSHEET_ID` or `GOOGLE_SHEET_NAME`.
@@ -30,8 +29,8 @@ Pricing data is read from and saved to Google Sheets; the server does not use
 To authorize the server:
 
 1. Enable the Google Sheets API in Google Cloud and create a service account.
-2. Create a JSON key for the service account and store it securely on the
-   machine running the server.
+2. Create a JSON key for the service account and store it as
+   `secrets/tgs-pricing-1f2045547346.json` on the machine running the server.
 3. Share the spreadsheet with the service account email address as an Editor.
    Keep the spreadsheet private; the server uses the service-account key to
    access it.
@@ -60,8 +59,8 @@ deploying.
 
 ## Deployment and access
 
-Provide `secrets.csv`, `data/data.json`, and the service-account key separately;
-do not commit credentials or private data. Install dependencies and set
+Provide the `secrets/` directory and `data/data.json` separately; do not commit
+credentials or private data. Install dependencies and set
 `GOOGLE_APPLICATION_CREDENTIALS` in the server environment, then run
 `python3 server.py` from the project directory. The server listens on port
 3811.

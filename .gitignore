@@ -1,4 +1,5 @@
-secrets.csv
 .DS_Store
 data/*
-tgs-pricing-1f2045547346.json
+/secrets/*.json
+/secrets/*.csv
+

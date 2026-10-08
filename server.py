@@ -176,9 +176,9 @@ def check_auth(auth_header):
     try:
         decoded = base64.b64decode(auth_header[6:]).decode('utf-8')
         user, pwd = decoded.split(':', 1)
-        if not os.path.exists('secrets.csv'):
+        if not os.path.exists('secrets/secrets.csv'):
             return False
-        with open('secrets.csv', 'r', encoding='utf-8') as f:
+        with open('secrets/secrets.csv', 'r', encoding='utf-8') as f:
             for row in csv.reader(f):
                 if len(row) >= 2 and row[0] == user and row[1] == pwd:
                     return True
