@@ -44,8 +44,8 @@ in that tier.
 
 ## Local application state
 
-Create `data/data.json` in the project directory. It stores edit logs and
-example cards, independently of the pricing Sheet:
+On startup, the server creates the `data/` directory and these files if they
+are missing:
 
 ```json
 {
@@ -54,13 +54,15 @@ example cards, independently of the pricing Sheet:
 }
 ```
 
-The data directory is git-ignored, so provide this file separately when
-deploying.
+`data/data.json` stores edit logs and example cards. The server also creates an
+empty `data/pricing_data.csv` placeholder; it does not supply pricing data.
+Pricing is fetched from Google Sheets by the server.
 
 ## Deployment and access
 
-Provide the `secrets/` directory and `data/data.json` separately; do not commit
-credentials or private data. Install dependencies and set
+Provide the `secrets/` directory separately; do not commit credentials or
+private data. The server initializes missing local data files automatically.
+Install dependencies and set
 `GOOGLE_APPLICATION_CREDENTIALS` in the server environment, then run
 `python3 server.py` from the project directory. The server listens on port
 3811.

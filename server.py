@@ -22,6 +22,19 @@ SHEET_NAME = os.environ.get('GOOGLE_SHEET_NAME', 'Sheet1')
 SHEETS_SCOPE = 'https://www.googleapis.com/auth/spreadsheets'
 
 
+def ensure_local_data_files():
+    os.makedirs('data', exist_ok=True)
+    for path, initial_contents in (
+        ('data/data.json', '{"log": [], "projects": []}\n'),
+        ('data/pricing_data.csv', ''),
+    ):
+        try:
+            with open(path, 'x', encoding='utf-8') as data_file:
+                data_file.write(initial_contents)
+        except FileExistsError:
+            continue
+
+
 def sheet_prefix():
     escaped_name = SHEET_NAME.replace("'", "''")
     return f"'{escaped_name}'!"
@@ -300,4 +313,5 @@ class H(http.server.SimpleHTTPRequestHandler):
             self.send_error(404)
 
 if __name__ == '__main__':
+    ensure_local_data_files()
     socketserver.TCPServer(('', 3811), H).serve_forever()
