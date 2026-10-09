@@ -3,6 +3,7 @@ import socketserver
 import json
 import base64
 import csv
+import glob
 import io
 import math
 import os
@@ -45,9 +46,14 @@ def sheet_range():
 
 
 def get_sheets_service():
-    credentials_path = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS')
-    if not credentials_path:
-        raise RuntimeError('Set GOOGLE_APPLICATION_CREDENTIALS to the service-account key path')
+    credentials_path = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS', 'secrets/*.json')
+    matching_paths = sorted(glob.glob(credentials_path))
+    if not matching_paths:
+        raise RuntimeError(
+            'No service-account key found at GOOGLE_APPLICATION_CREDENTIALS '
+            f'({credentials_path}); add a JSON key under secrets/ or set the variable'
+        )
+    credentials_path = matching_paths[0]
     try:
         credentials = service_account.Credentials.from_service_account_file(
             credentials_path,
@@ -233,11 +239,20 @@ class H(http.server.SimpleHTTPRequestHandler):
         try:
             body = get_pricing_csv().encode('utf-8')
         except (GoogleAuthError, HttpError, httplib2.HttpLib2Error, OSError, RuntimeError, ValueError) as exc:
-            self.log_error('Could not read pricing data from Google Sheets: %s', exc)
-            self.send_error(502, 'Unable to read pricing data from Google Sheets')
+            message = f'Could not read pricing data from Google Sheets: {exc}'
+            self.log_error('%s', message)
+            body = message.encode('utf-8')
+            self.send_response(502)
+            self.send_header('Content-Type', 'text/plain; charset=utf-8')
+            self.send_header('X-Google-Sheets-URL', f'https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/edit')
+            self.send_header('Content-Length', str(len(body)))
+            self.send_header('Cache-Control', 'no-store')
+            self.end_headers()
+            self.wfile.write(body)
             return
         self.send_response(200)
         self.send_header('Content-Type', 'text/csv; charset=utf-8')
+        self.send_header('X-Google-Sheets-URL', f'https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/edit')
         self.send_header('Content-Length', str(len(body)))
         self.send_header('Cache-Control', 'no-store')
         self.end_headers()

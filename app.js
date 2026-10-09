@@ -7,8 +7,16 @@ let cart = [];
 try { cart = JSON.parse(localStorage.getItem('pricelist-cart') || '[]'); } catch(e) {}
 
 async function loadData() {
+  setConnectionStatus('connecting', 'Connecting to Google Sheets…');
+  let sheetUrl = '';
   try {
     const [jRes, cRes] = await Promise.all([fetch('data/data.json'), fetch('data/pricing_data.csv')]);
+    sheetUrl = cRes.headers.get('X-Google-Sheets-URL') || '';
+    if (!jRes.ok) throw new Error(`Could not load pricing data (${jRes.status})`);
+    if (!cRes.ok) {
+      const detail = (await cRes.text()).trim();
+      throw new Error(detail || `Could not read pricing data from Google Sheets (${cRes.status})`);
+    }
     DATA = await jRes.json();
     const csvText = await cRes.text();
     const lines = csvText.split('\n').map(l => l.trim()).filter(l => l);
@@ -37,15 +45,42 @@ async function loadData() {
     }
     DATA.rows = ROWS;
     LOG = DATA.log = DATA.log || [];
-    PROJECTS = DATA.projects = DATA.projects || Array.from({length:1}, (_, i) => newProject(i));
+    PROJECTS = DATA.projects = resolveProjects(DATA.projects || Array.from({length:1}, (_, i) => newProject(i)));
     renderAll();
     renderCart();
     try { updateProjUi(); renderProjects(); } catch(e) {}
+    setConnectionStatus('connected', 'Connected', sheetUrl);
   } catch(e) {
     console.error(e);
-    document.body.innerHTML = '<h2>Failed to load data. Make sure the server is running.</h2>';
+    const message = e instanceof TypeError
+      ? 'Could not connect to the server. Check that it is running and try again.'
+      : e.message;
+    setConnectionStatus('error', message, sheetUrl);
+    const table = document.getElementById('tbl');
+    if (table) table.innerHTML = `<p class="note connection-error">${esc(message)}</p>`;
   }
 }
+
+function setConnectionStatus(status, message, sheetUrl = '') {
+  const el = document.getElementById('connectionStatus');
+  if (!el) return;
+  el.className = `connection-status ${status}`;
+  el.textContent = message;
+  if (sheetUrl) {
+    try {
+      const url = new URL(sheetUrl);
+      if (url.origin === 'https://docs.google.com' && url.pathname.startsWith('/spreadsheets/d/')) {
+        const link = document.createElement('a');
+        link.href = url.href;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.textContent = 'Google Sheet';
+        el.append(' · ', link);
+      }
+    } catch(e) {}
+  }
+}
+
 loadData();
 
 const $ = id => document.getElementById(id);
@@ -335,7 +370,7 @@ async function savePage(){
   ROWS.filter(r => r.service.trim()).forEach(r =>
     csvLines.push([q(r.service), q(r.tech), q(r.unit), ...r.prices.map(p => p == null ? '' : p), q(r.rate_card !== false)].join(',')));
   const csvText = csvLines.join('\n');
-  const jsonText = JSON.stringify({ log: LOG, projects: PROJECTS });
+  const jsonText = JSON.stringify({ log: LOG, projects: projectsForSave() });
   try {
     const btn = document.getElementById('saveBtn');
     btn.textContent = 'Saving...';
@@ -390,6 +425,33 @@ document.addEventListener('click', e => {
     ROWS.splice(ROWS.indexOf(r),1); markDirty(); renderAll(); }
 });
 // ---------- projects ----------
+// Saved cards refer to tiers and services by NAME, so reordering or deleting rows/columns in the Sheet
+// can't repoint them. At runtime they use tier index / row id as before; these two convert at the boundary.
+function resolveProjects(list){
+  return list.map(p => {
+    const q = {...p};
+    if (typeof q.tier === 'string'){
+      const i = TIERS.indexOf(q.tier);
+      if (i < 0){ q.tierLost = q.tier; q.tier = 0; } else q.tier = i;
+    }
+    q.items = (p.items || []).map(it => {
+      const legacy = !('tech' in it);
+      let r = ROWS.find(x => x.service === it.name && (legacy || x.tech === it.tech)) || ROWS.find(x => x.service === it.name);
+      if (!r && legacy && it.row != null) r = ROWS.find(x => x.id === it.row);
+      return {...it, row: r ? r.id : -1, tech: r ? r.tech : it.tech};
+    });
+    return q;
+  });
+}
+function projectsForSave(){
+  return PROJECTS.map(p => {
+    const {tierLost, ...o} = p;
+    o.tier = TIERS[p.tier] != null ? TIERS[p.tier] : p.tier;
+    o.items = p.items.map(it => { const r = byId(it.row), {row, ...rest} = it;
+      return {...rest, name: r ? r.service : it.name, tech: r ? r.tech : it.tech}; });
+    return o;
+  });
+}
 function newProject(id){ return {id, name:'', desc:'', tier:0, samples:null, genome:null, cov:30, items:[]}; }
 // Flow cell yield comes from the "(~100-120 Gb)" in the service name; the lower figure is used.
 const yieldGb = r => { const m = r && /\(~?\s*(\d+(?:\.\d+)?)(?:\s*-\s*\d+(?:\.\d+)?)?\s*Gb\)/i.exec(r.service); return m ? +m[1] : null; };
@@ -402,6 +464,7 @@ function compute(p){
   const S = p.samples > 0 ? p.samples : 0;
   const gb = (S && p.genome > 0 && p.cov > 0) ? S * (p.genome / 1000) * p.cov : null;
   const warn = []; let total = 0;
+  if (p.tierLost) warn.push(`Tier "${p.tierLost}" no longer exists; pick a tier.`);
   const lines = p.items.map(it => {
     const r = byId(it.row); if (r) it.name = r.service;
     const price = r ? r.prices[p.tier] : null, y = yieldGb(r);
@@ -466,22 +529,31 @@ function qtyDesc(l){
 function showHtml(p){
   if (!hasContent(p)) return `<article class="pc empty" data-pid="${p.id}"><b>Empty example</b><span>Switch to Edit to fill it in</span></article>`;
   const c = compute(p), max = c.total || 1;
-  const pills = [pretty(TIERS[p.tier]), p.samples ? `${fmtN(p.samples)} sample${p.samples == 1 ? '' : 's'}` : '',
+  const pills = [pretty(TIERS[p.tier]),
     p.genome ? mbText(p.genome) + ' genome' : '', p.genome && p.cov ? `${fmtN(p.cov)}× coverage` : '']
     .filter(Boolean).map(t => `<span class="pill">${esc(t)}</span>`).join('');
-  const lines = c.lines.map(l => `<li><div class="lr"><span>${esc(l.it.name)}</span><span class="num">${l.price == null ? '—' : moneyR(l.line)}</span></div>
-      <div class="lm"><span class="qty-badge">${fmtN(l.qty)}×</span>${l.price == null ? '—' : moneyR(l.price)} ${esc(l.r ? l.r.unit : '')}${l.it.mode === 'gb' && l.y ? ` · ${l.y} Gb each` : ''}</div></li>`).join('');
+  const lines = c.lines.map(l => `<li><div class="lr"><span class="line-detail"><span class="line-name">${esc(l.it.name)}</span>
+      <span class="lm"><span class="qty-badge"><span class="badge-qty">${fmtN(l.qty)}×</span><span class="badge-price">${l.price == null ? '—' : moneyR(l.price)}</span></span> ${esc(l.r ? l.r.unit : '')}${l.it.mode === 'gb' && l.y ? ` · ${l.y} Gb each` : ''}</span></span>
+      <span class="line-total num">${l.price == null ? '—' : moneyR(l.line)}</span></div></li>`).join('');
   return `<article class="pc" data-pid="${p.id}">
     <div><h3>${esc(p.name || 'Untitled example')}</h3>${p.desc ? `<p class="desc">${esc(p.desc)}</p>` : ''}</div>
     <div class="pills">${pills}</div>
-    <div class="kpis"><div><span>Total</span><b>${p.items.length ? moneyR(c.total) : '—'}</b></div>
-      <div class="per"><span>Per sample</span><b>${p.items.length && c.per != null ? moneyR(c.per) : '—'}</b></div></div>
+    <div class="kpis"><div class="samples"><span>Samples</span><b>${p.samples ? fmtN(p.samples) : '—'}</b></div>
+      <div class="per"><span>Per sample</span><b>${p.items.length && c.per != null ? moneyR(c.per) : '—'}</b></div>
+      <div class="total"><span>Total</span><b>${p.items.length ? moneyR(c.total) : '—'}</b></div></div>
     <div class="data">${c.gb ? fmtN(c.gb) + ' Gb of data needed' : ''}</div>
     <ul>${lines}</ul>
     <div class="pwarn">${esc(c.warn.join(' '))}</div>
   </article>`;
 }
-const renderProjects = () => { $('projgrid').innerHTML = PROJECTS.map(projMode === 'show' ? showHtml : cardHtml).join(''); };
+const markTrunc = () => document.querySelectorAll('.pc li').forEach(li => {
+  const t = [...li.querySelectorAll('.line-name,.lm')].some(e => e.scrollWidth > e.clientWidth + 1);
+  li.classList.toggle('trunc', t); if (t) li.tabIndex = 0; else li.removeAttribute('tabindex');
+});
+let truncRaf = 0;
+const queueTrunc = () => { cancelAnimationFrame(truncRaf); truncRaf = requestAnimationFrame(markTrunc); };
+new ResizeObserver(queueTrunc).observe($('projgrid'));
+const renderProjects = () => { $('projgrid').innerHTML = PROJECTS.map(projMode === 'show' ? showHtml : cardHtml).join(''); queueTrunc(); };
 function updateProjUi(){
   document.querySelectorAll('#projMode button').forEach(b => { const on = b.dataset.pm === projMode;
     b.classList.toggle('on', on); b.setAttribute('aria-pressed', on); });
@@ -522,7 +594,7 @@ function refreshCard(art){
     if (ds.pf){
       const f = ds.pf, old = ds.was == null ? '' : ds.was;
       if (f === 'name' || f === 'desc') p[f] = el.value.trim();
-      else if (f === 'tier') p.tier = +el.value;
+      else if (f === 'tier'){ p.tier = +el.value; delete p.tierLost; }
       else p[f] = num(el.value);
       const now = f === 'tier' ? TIERS[p.tier] : (p[f] == null ? '' : p[f]);
       const was = f === 'tier' ? TIERS[+old] : old;
