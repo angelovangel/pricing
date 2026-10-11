@@ -560,7 +560,7 @@ function itemLi(l){
 function showHtml(p){
   if (!hasContent(p)) return `<article class="pc empty" data-pid="${p.id}"><b>Empty example</b><span>Switch to Edit to fill it in</span></article>`;
   const pv = viewCard(p), c = compute(pv), multi = TIERS.length > 1;
-  const pills = [multi ? '' : pretty(TIERS[p.tier]), p.samples ? `${fmtN(p.samples)} samples` : '',
+  const pills = [multi ? '' : pretty(TIERS[p.tier]),
     p.genome ? mbText(p.genome) + ' genome' : '', p.genome && p.cov ? `${fmtN(p.cov)}× coverage` : '']
     .filter(Boolean).map(t => `<span class="pill">${esc(t)}</span>`).join('');
   // long lists are collapsed to the first LIMIT items
@@ -576,6 +576,7 @@ function showHtml(p){
       <div><h3>${esc(p.name || 'Untitled example')}</h3>${p.desc ? `<p class="desc">${esc(p.desc)}</p>` : ''}</div></div>
     <div class="pills">${pills}</div>
     <div class="kpis"><div class="total"><span>Total</span><b>${p.items.length ? moneyR(c.total) : '—'}</b></div>
+      ${p.samples ? `<div class="samples"><span>Samples</span><b>${fmtN(p.samples)}</b></div>` : ''}
       <div class="per"><span>Per sample</span><b>${p.items.length && c.per != null ? moneyR(c.per) : '—'}</b></div></div>
     <div class="data">${c.gb ? fmtN(c.gb) + ' Gb of data needed' : ''}</div>
     <ul>${lines}</ul>

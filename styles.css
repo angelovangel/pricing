@@ -231,3 +231,7 @@ button.btn.sm{padding:4px 10px;font-size:11.5px;white-space:nowrap}
 .proj.drop-before{box-shadow:-5px 0 0 var(--accent)}
 .proj.drop-after{box-shadow:5px 0 0 var(--accent)}
 @media (max-width:650px){.proj.drop-before{box-shadow:0 -5px 0 var(--accent)}.proj.drop-after{box-shadow:0 5px 0 var(--accent)}}
+
+.kpis{gap:20px}
+.kpis .samples{margin-left:auto;text-align:right}
+.kpis .samples b{font-size:14px}
