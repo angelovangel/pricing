@@ -170,3 +170,26 @@ body.viewonly #projMode,body.viewonly #addProj,body.viewonly .ptop,body.viewonly
 .pc li.trunc:hover .line-name,.pc li.trunc:focus-visible .line-name,
 .pc li.trunc:hover .lm,.pc li.trunc:focus-visible .lm{white-space:normal;overflow:visible;text-overflow:clip;overflow-wrap:anywhere}
 .pc li.trunc:focus-visible{outline:none}
+
+/* card actions */
+.pch{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+.pch>div{min-width:0}
+button.btn.sm{padding:4px 10px;font-size:11.5px;white-space:nowrap}
+.pills .seg{margin-left:auto}
+.seg.sm button{padding:3px 12px;font-size:11px}
+.ph{gap:6px}
+.ph input.pname{min-width:0;flex:1}
+.pb{flex:none;background:none;border:0;padding:2px 4px;color:var(--muted);font:inherit;font-size:11.5px;cursor:pointer}
+.pb:hover:not(:disabled){color:var(--ink)}
+.pb:disabled{opacity:.3;cursor:default}
+.ph .rm{flex:none;font-size:11.5px}
+#toast .toast-act{background:none;border:0;padding:0 0 0 6px;color:inherit;font:inherit;font-weight:700;text-decoration:underline;cursor:pointer}
+
+/* toolbar above the title: quiet by default */
+.pch{flex-direction:column;justify-content:flex-start;align-items:stretch;gap:8px}
+.pbar{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:22px}
+.pbar .seg{border-radius:6px;border-color:transparent;background:var(--bg)}
+.pbar .seg.sm button{padding:2px 9px;font-size:10.5px}
+.pbar .seg button.on{background:var(--soft);color:var(--accent)}
+.pbar .lnk{margin-left:auto;background:none;border:0;padding:2px 4px;color:var(--muted);font:inherit;font-size:11px;cursor:pointer;opacity:.8}
+.pbar .lnk:hover{color:var(--ink);opacity:1;text-decoration:underline}

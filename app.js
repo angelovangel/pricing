@@ -12,6 +12,7 @@ async function loadData() {
   try {
     const [jRes, cRes] = await Promise.all([fetch('data/data.json'), fetch('data/pricing_data.csv')]);
     sheetUrl = cRes.headers.get('X-Google-Sheets-URL') || '';
+    const offline = cRes.headers.get('X-Data-Source') === 'local' || jRes.headers.get('X-Data-Source') === 'local';
     if (!jRes.ok) throw new Error(`Could not load pricing data (${jRes.status})`);
     if (!cRes.ok) {
       const detail = (await cRes.text()).trim();
@@ -49,7 +50,8 @@ async function loadData() {
     renderAll();
     renderCart();
     try { updateProjUi(); renderProjects(); } catch(e) {}
-    setConnectionStatus('connected', 'Connected', sheetUrl);
+    if (offline) setConnectionStatus('error', 'Google Sheets unavailable \u2013 using local data', sheetUrl);
+    else setConnectionStatus('connected', 'Connected', sheetUrl);
   } catch(e) {
     console.error(e);
     const message = e instanceof TypeError
@@ -90,12 +92,18 @@ const moneyR = n => CUR + Math.round(n).toLocaleString();
 const pretty = t => t.replace(/_/g,' ');
 const saveCart = () => { try { localStorage.setItem('pricelist-cart', JSON.stringify(cart)); } catch(e) {} };
 let toastTimer;
-function showToast(msg, isError = false) {
+function showToast(msg, isError = false, action = null) {
   const t = document.getElementById('toast');
   t.textContent = msg;
+  if (action){
+    const b = document.createElement('button');
+    b.className = 'toast-act'; b.textContent = action.label;
+    b.onclick = () => { clearTimeout(toastTimer); t.className = ''; action.fn(); };
+    t.append(b);
+  }
   t.className = isError ? 'show error' : 'show';
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.className = '', 3000);
+  toastTimer = setTimeout(() => t.className = '', action ? 8000 : 3000);
 }
 
 function techCounts(ti){
@@ -378,7 +386,9 @@ async function savePage(){
     if(!res.ok) throw new Error("HTTP " + res.status);
     setDirty(false);
     btn.textContent = 'Save page';
-    showToast('Saved successfully!');
+    const savedTo = res.headers.get('X-Saved-To');
+    if (savedTo && savedTo !== 'both') showToast((await res.text()) || 'Saved with warnings', true);
+    else showToast('Saved successfully!');
   } catch (err) {
     showToast('Error saving data: ' + err.message, true);
     document.getElementById('saveBtn').textContent = 'Save page';
@@ -503,6 +513,9 @@ function cardHtml(p){
         <span data-out="lq${i}">${qtyText(l)}</span></div></div>`).join('');
   return `<article class="proj" data-pid="${p.id}">
     <div class="ph"><input class="ed pname" data-pf="name" placeholder="Example name" value="${esc(p.name)}">
+      <button class="pb" data-pup aria-label="Move card up" title="Move up"${PROJECTS[0] === p ? ' disabled' : ''}>↑</button>
+      <button class="pb" data-pdown aria-label="Move card down" title="Move down"${PROJECTS[PROJECTS.length - 1] === p ? ' disabled' : ''}>↓</button>
+      <button class="pb" data-pdup title="Duplicate this card">Duplicate</button>
       <button class="rm" data-pdel aria-label="Delete card">Delete</button></div>
     <input class="ed" data-pf="desc" placeholder="Short description (optional)" value="${esc(p.desc)}">
     <div class="pf">
@@ -526,17 +539,31 @@ function qtyDesc(l){
   const unit = l.r ? l.r.unit : '';
   return `${fmtN(l.qty)} × ${l.price == null ? '—' : money(l.price)} ${unit}` + (l.it.mode === 'gb' && l.y ? ` · ${l.y} Gb each` : '');
 }
+const viewTier = new Map();   // per-card tier shown in Show mode; view only, never saved
+const viewCard = p => { const t = viewTier.has(p.id) ? viewTier.get(p.id) : p.tier; return t === p.tier ? p : {...p, tier: t, tierLost: undefined}; };
+function cardText(p){
+  const pv = viewCard(p), c = compute(pv), L = [p.name || 'Untitled example'];
+  if (p.desc) L.push(p.desc);
+  L.push([pretty(TIERS[pv.tier]), p.samples ? `${fmtN(p.samples)} samples` : '', p.genome ? mbText(p.genome) + ' genome' : '',
+    p.genome && p.cov ? `${fmtN(p.cov)}× coverage` : '', c.gb ? `${fmtN(c.gb)} Gb of data needed` : ''].filter(Boolean).join(' · '), '');
+  c.lines.forEach(l => L.push(`- ${l.it.name}: ${qtyDesc(l)} = ${l.price == null ? '—' : moneyR(l.line)}`));
+  if (p.items.length){ L.push('', `Total: ${moneyR(c.total)}`); if (c.per != null) L.push(`Per sample: ${moneyR(c.per)}`); }
+  return L.join('\n');
+}
 function showHtml(p){
   if (!hasContent(p)) return `<article class="pc empty" data-pid="${p.id}"><b>Empty example</b><span>Switch to Edit to fill it in</span></article>`;
-  const c = compute(p), max = c.total || 1;
-  const pills = [pretty(TIERS[p.tier]),
+  const pv = viewCard(p), c = compute(pv), max = c.total || 1, multi = TIERS.length > 1;
+  const pills = [multi ? '' : pretty(TIERS[p.tier]),
     p.genome ? mbText(p.genome) + ' genome' : '', p.genome && p.cov ? `${fmtN(p.cov)}× coverage` : '']
     .filter(Boolean).map(t => `<span class="pill">${esc(t)}</span>`).join('');
   const lines = c.lines.map(l => `<li><div class="lr"><span class="line-detail"><span class="line-name">${esc(l.it.name)}</span>
       <span class="lm"><span class="qty-badge"><span class="badge-qty">${fmtN(l.qty)}×</span><span class="badge-price">${l.price == null ? '—' : moneyR(l.price)}</span></span> ${esc(l.r ? l.r.unit : '')}${l.it.mode === 'gb' && l.y ? ` · ${l.y} Gb each` : ''}</span></span>
       <span class="line-total num">${l.price == null ? '—' : moneyR(l.line)}</span></div></li>`).join('');
   return `<article class="pc" data-pid="${p.id}">
-    <div><h3>${esc(p.name || 'Untitled example')}</h3>${p.desc ? `<p class="desc">${esc(p.desc)}</p>` : ''}</div>
+    <div class="pch"><div class="pbar">${multi ? `<div class="seg sm" role="group" aria-label="Tier shown">${TIERS.map((t, i) =>
+      `<button data-ptier="${i}" class="${i === pv.tier ? 'on' : ''}" aria-pressed="${i === pv.tier}">${esc(pretty(t))}</button>`).join('')}</div>` : ''}
+      <button class="lnk" data-pcopy title="Copy this card as plain text">Copy text</button></div>
+      <div><h3>${esc(p.name || 'Untitled example')}</h3>${p.desc ? `<p class="desc">${esc(p.desc)}</p>` : ''}</div></div>
     <div class="pills">${pills}</div>
     <div class="kpis"><div class="samples"><span>Samples</span><b>${p.samples ? fmtN(p.samples) : '—'}</b></div>
       <div class="per"><span>Per sample</span><b>${p.items.length && c.per != null ? moneyR(c.per) : '—'}</b></div>
@@ -594,7 +621,7 @@ function refreshCard(art){
     if (ds.pf){
       const f = ds.pf, old = ds.was == null ? '' : ds.was;
       if (f === 'name' || f === 'desc') p[f] = el.value.trim();
-      else if (f === 'tier'){ p.tier = +el.value; delete p.tierLost; }
+      else if (f === 'tier'){ p.tier = +el.value; delete p.tierLost; viewTier.delete(p.id); }
       else p[f] = num(el.value);
       const now = f === 'tier' ? TIERS[p.tier] : (p[f] == null ? '' : p[f]);
       const was = f === 'tier' ? TIERS[+old] : old;
@@ -620,10 +647,39 @@ function refreshCard(art){
       p.items.splice(+b.dataset.plrm, 1);
       markDirty(); redrawCard(p.id);
     } else if (b.dataset.pdel !== undefined){
-      const has = p.name || p.desc || p.items.length;
-      if (!has || confirm(`Delete "${p.name || 'this card'}"?`)){
-        PROJECTS.splice(PROJECTS.indexOf(p), 1); markDirty(); renderProjects();
-      }
+      const idx = PROJECTS.indexOf(p);
+      PROJECTS.splice(idx, 1); viewTier.delete(p.id); markDirty(); renderProjects();
+      showToast(`Deleted "${p.name || 'card'}"`, false, {label: 'Undo', fn: () => {
+        if (PROJECTS.some(q => q.id === p.id)) p.id = PROJECTS.reduce((m, q) => Math.max(m, q.id), -1) + 1;
+        PROJECTS.splice(Math.min(idx, PROJECTS.length), 0, p); markDirty(); renderProjects();
+      }});
+    } else if (b.dataset.pup !== undefined || b.dataset.pdown !== undefined){
+      const i = PROJECTS.indexOf(p), j = b.dataset.pup !== undefined ? i - 1 : i + 1;
+      if (j < 0 || j >= PROJECTS.length) return;
+      [PROJECTS[i], PROJECTS[j]] = [PROJECTS[j], PROJECTS[i]]; markDirty(); renderProjects();
+      const nb = document.querySelector(`.proj[data-pid="${p.id}"] [${b.dataset.pup !== undefined ? 'data-pup' : 'data-pdown'}]`);
+      const fb = nb && !nb.disabled ? nb : document.querySelector(`.proj[data-pid="${p.id}"] [data-pup],.proj[data-pid="${p.id}"] [data-pdown]`);
+      if (fb){ fb.focus(); fb.scrollIntoView({block: 'nearest'}); }
+    } else if (b.dataset.pdup !== undefined){
+      const copy = JSON.parse(JSON.stringify(p)); delete copy.tierLost;
+      copy.id = PROJECTS.reduce((m, q) => Math.max(m, q.id), -1) + 1;
+      if (copy.name) copy.name += ' (copy)';
+      PROJECTS.splice(PROJECTS.indexOf(p) + 1, 0, copy); markDirty(); renderProjects();
+      const f = document.querySelector(`.proj[data-pid="${copy.id}"] [data-pf="name"]`);
+      if (f){ f.focus(); f.scrollIntoView({block: 'nearest'}); }
+    }
+  });
+  // Show mode: tier toggle (view only) and copy as text
+  pg.addEventListener('click', e => {
+    const b = e.target.closest('button'), art = b && b.closest('.pc'); if (!art) return;
+    const p = projById(+art.dataset.pid); if (!p) return;
+    if (b.dataset.pcopy !== undefined){
+      copyText(cardText(p)).then(() => showToast('Card copied as text'), () => showToast('Copy failed', true));
+    } else if (b.dataset.ptier !== undefined){
+      const t = +b.dataset.ptier;
+      if (t === p.tier) viewTier.delete(p.id); else viewTier.set(p.id, t);
+      renderProjects();
+      const nb = document.querySelector(`.pc[data-pid="${p.id}"] [data-ptier="${t}"]`); if (nb) nb.focus();
     }
   });
   $('addProj').addEventListener('click', () => {

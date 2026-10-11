@@ -7,6 +7,7 @@ import glob
 import io
 import math
 import os
+import sys
 
 import httplib2
 from google.auth.exceptions import GoogleAuthError
@@ -20,6 +21,8 @@ SPREADSHEET_ID = os.environ.get(
     '19ByaGb1-X7Z_6_Dwhba1Efn78EQ2Ue9n9uXdAIHCk-U',
 )
 SHEET_NAME = os.environ.get('GOOGLE_SHEET_NAME', 'Sheet1')
+CARDS_SHEET_NAME = os.environ.get('GOOGLE_CARDS_SHEET_NAME', 'cards')
+LOGS_SHEET_NAME = os.environ.get('GOOGLE_LOGS_SHEET_NAME', 'logs')
 SHEETS_SCOPE = 'https://www.googleapis.com/auth/spreadsheets'
 
 
@@ -36,8 +39,40 @@ def ensure_local_data_files():
             continue
 
 
-def sheet_prefix():
-    escaped_name = SHEET_NAME.replace("'", "''")
+def write_local(path, text):
+    os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
+    tmp = path + '.tmp'
+    with open(tmp, 'w', encoding='utf-8', newline='') as f:
+        f.write(text)
+    os.replace(tmp, path)
+
+
+def mirror_local(path, text):
+    """Keep data/ in step with what was just read from Google (best effort)."""
+    try:
+        try:
+            with open(path, 'r', encoding='utf-8', newline='') as f:
+                if f.read() == text:
+                    return
+        except OSError:
+            pass
+        write_local(path, text)
+    except OSError as exc:
+        print(f'Could not update local copy {path}: {exc}', file=sys.stderr)
+
+
+def rows_to_csv_text(rows):
+    output = io.StringIO(newline='')
+    csv.writer(output, lineterminator='\n').writerows(rows)
+    return output.getvalue()
+
+
+def header_text(value):
+    return ' '.join(str(value).split())[:200].encode('ascii', 'replace').decode('ascii')
+
+
+def sheet_prefix(name=None):
+    escaped_name = (name or SHEET_NAME).replace("'", "''")
     return f"'{escaped_name}'!"
 
 
@@ -96,6 +131,24 @@ def get_pricing_csv():
     return output.getvalue()
 
 
+def load_pricing_csv():
+    """(text, source, error): Google when reachable, otherwise data/pricing_data.csv."""
+    try:
+        text = get_pricing_csv()
+    except (GoogleAuthError, HttpError, httplib2.HttpLib2Error, OSError, RuntimeError, ValueError) as exc:
+        try:
+            with open('data/pricing_data.csv', 'r', encoding='utf-8', newline='') as f:
+                local = f.read()
+        except OSError:
+            local = ''
+        if not local.strip():
+            raise
+        print(f'Google Sheets unavailable, serving data/pricing_data.csv: {exc}', file=sys.stderr)
+        return local, 'local', str(exc)
+    mirror_local('data/pricing_data.csv', text)
+    return text, 'google', ''
+
+
 def parse_pricing_csv(csv_text):
     rows = list(csv.reader(io.StringIO(csv_text)))
     if not rows:
@@ -147,14 +200,14 @@ def column_name(number):
     return name
 
 
-def save_pricing_rows(rows):
-    service = get_sheets_service()
+def write_tab(service, tab, rows):
+    prefix = sheet_prefix(tab)
     old_values = (
         service.spreadsheets()
         .values()
         .get(
             spreadsheetId=SPREADSHEET_ID,
-            range=sheet_range(),
+            range=f'{prefix}A:ZZ',
             valueRenderOption='UNFORMATTED_VALUE',
         )
         .execute()
@@ -162,7 +215,7 @@ def save_pricing_rows(rows):
     )
     service.spreadsheets().values().update(
         spreadsheetId=SPREADSHEET_ID,
-        range=f'{sheet_prefix()}A1',
+        range=f'{prefix}A1',
         valueInputOption='RAW',
         body={'values': rows},
     ).execute()
@@ -172,7 +225,7 @@ def save_pricing_rows(rows):
     if old_row_count > new_row_count:
         service.spreadsheets().values().clear(
             spreadsheetId=SPREADSHEET_ID,
-            range=f'{sheet_prefix()}A{new_row_count + 1}:ZZ{old_row_count}',
+            range=f'{prefix}A{new_row_count + 1}:ZZ{old_row_count}',
             body={},
         ).execute()
 
@@ -182,11 +235,186 @@ def save_pricing_rows(rows):
         service.spreadsheets().values().clear(
             spreadsheetId=SPREADSHEET_ID,
             range=(
-                f'{sheet_prefix()}{column_name(new_column_count + 1)}1:'
+                f'{prefix}{column_name(new_column_count + 1)}1:'
                 f'{column_name(old_column_count)}{max(old_row_count, new_row_count)}'
             ),
             body={},
         ).execute()
+
+
+def save_pricing_rows(rows):
+    write_tab(get_sheets_service(), SHEET_NAME, rows)
+
+
+# ---------- cards and logs tabs ----------
+CARD_HEADERS = ['card_id', 'card_order', 'name', 'desc', 'tier', 'samples', 'genome_mb', 'coverage',
+                'item_order', 'service', 'tech', 'mode', 'n']
+LOG_HEADERS = ['time', 'action', 'service', 'field', 'from', 'to']
+_TAB_CACHE = {}
+
+
+def resolve_tab(service, wanted):
+    """Find the real tab title, ignoring case (the Sheets API is case-sensitive)."""
+    if wanted in _TAB_CACHE:
+        return _TAB_CACHE[wanted]
+    meta = service.spreadsheets().get(
+        spreadsheetId=SPREADSHEET_ID, fields='sheets.properties.title').execute()
+    titles = [sheet['properties']['title'] for sheet in meta.get('sheets', [])]
+    match = next((t for t in titles if t.lower() == wanted.lower()), None)
+    if match:
+        _TAB_CACHE[wanted] = match
+    return match
+
+
+def cell(value):
+    return '' if value is None else value
+
+
+def num_or_none(value):
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    if isinstance(value, (int, float)):
+        return value
+    try:
+        number = float(value)
+    except ValueError:
+        return None
+    return int(number) if number.is_integer() else number
+
+
+def cards_to_rows(projects):
+    rows = [CARD_HEADERS]
+    for order, card in enumerate(projects, start=1):
+        base = [cell(card.get('id')), order, cell(card.get('name')), cell(card.get('desc')), cell(card.get('tier')),
+                cell(card.get('samples')), cell(card.get('genome')), cell(card.get('cov'))]
+        items = card.get('items') or []
+        if not items:
+            rows.append(base + [''] * 5)
+        for item_order, item in enumerate(items, start=1):
+            rows.append(base + [item_order, cell(item.get('name')), cell(item.get('tech')),
+                                cell(item.get('mode')), cell(item.get('n'))])
+    return rows
+
+
+def rows_to_cards(values):
+    if not values:
+        return []
+    index = {str(h).strip().lower(): i for i, h in enumerate(values[0])}
+    if 'card_id' not in index:
+        raise ValueError('The cards tab needs a card_id column')
+
+    def col(row, name):
+        i = index.get(name)
+        return row[i] if i is not None and i < len(row) else ''
+
+    cards = {}
+    for row in values[1:]:
+        if not any(str(v).strip() for v in row):
+            continue
+        card_id = num_or_none(col(row, 'card_id'))
+        if card_id is None:
+            continue
+        card_id = int(card_id)
+        card = cards.get(card_id)
+        if card is None:
+            order = num_or_none(col(row, 'card_order'))
+            card = cards[card_id] = {
+                'id': card_id, 'name': str(col(row, 'name')), 'desc': str(col(row, 'desc')),
+                'tier': str(col(row, 'tier')), 'samples': num_or_none(col(row, 'samples')),
+                'genome': num_or_none(col(row, 'genome_mb')), 'cov': num_or_none(col(row, 'coverage')),
+                'items': [], '_order': card_id if order is None else order,
+            }
+        service_name = str(col(row, 'service')).strip()
+        if service_name:
+            n = num_or_none(col(row, 'n'))
+            item_order = num_or_none(col(row, 'item_order'))
+            card['items'].append((len(card['items']) if item_order is None else item_order, {
+                'name': service_name, 'tech': str(col(row, 'tech')),
+                'mode': str(col(row, 'mode')) or 'fixed', 'n': 1 if n is None else n}))
+    result = []
+    for card in sorted(cards.values(), key=lambda c: c['_order']):
+        card['items'] = [item for _, item in sorted(card['items'], key=lambda x: x[0])]
+        del card['_order']
+        result.append(card)
+    return result
+
+
+def log_to_rows(log):
+    rows = [LOG_HEADERS]
+    for entry in log:
+        rows.append([cell(entry.get('t')), cell(entry.get('action')), cell(entry.get('service')),
+                     cell(entry.get('field')), cell(entry.get('from')), cell(entry.get('to'))])
+    return rows
+
+
+def rows_to_log(values):
+    if not values:
+        return []
+    index = {str(h).strip().lower(): i for i, h in enumerate(values[0])}
+    keys = (('t', 'time'), ('action', 'action'), ('service', 'service'),
+            ('field', 'field'), ('from', 'from'), ('to', 'to'))
+    log = []
+    for row in values[1:]:
+        if not any(str(v).strip() for v in row):
+            continue
+        log.append({key: (str(row[index[name]]) if name in index and index[name] < len(row) else '')
+                    for key, name in keys})
+    return log
+
+
+def read_local_app_data():
+    try:
+        with open('data/data.json', 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            return data
+    except (OSError, ValueError):
+        pass
+    return {'log': [], 'projects': []}
+
+
+def get_app_data():  # returns (data, source)
+    """Cards and log from the Google Sheet tabs. A tab with no header yet (never saved) or an
+    unreachable Sheet falls back to the local data/data.json copy."""
+    data = read_local_app_data()
+    source = 'local'
+    try:
+        service = get_sheets_service()
+        tabs = {key: resolve_tab(service, name)
+                for key, name in (('cards', CARDS_SHEET_NAME), ('logs', LOGS_SHEET_NAME))}
+        found = {key: tab for key, tab in tabs.items() if tab}
+        values = {}
+        if found:
+            response = service.spreadsheets().values().batchGet(
+                spreadsheetId=SPREADSHEET_ID,
+                ranges=[f'{sheet_prefix(tab)}A:ZZ' for tab in found.values()],
+                valueRenderOption='UNFORMATTED_VALUE',
+            ).execute()
+            for key, value_range in zip(found, response.get('valueRanges', [])):
+                values[key] = value_range.get('values', [])
+        if values.get('cards'):
+            data['projects'] = rows_to_cards(values['cards'])
+        if values.get('logs'):
+            data['log'] = rows_to_log(values['logs'])
+        source = 'google'
+        data.setdefault('projects', [])
+        data.setdefault('log', [])
+        mirror_local('data/data.json', json.dumps(data))
+    except (GoogleAuthError, HttpError, httplib2.HttpLib2Error, OSError, RuntimeError, ValueError) as exc:
+        print(f'Could not read cards/logs from Google Sheets, using local copy: {exc}', file=sys.stderr)
+    data.setdefault('projects', [])
+    data.setdefault('log', [])
+    return data, source
+
+
+def save_app_data(data):
+    service = get_sheets_service()
+    for key, name, rows in (('cards', CARDS_SHEET_NAME, cards_to_rows(data.get('projects', []))),
+                            ('logs', LOGS_SHEET_NAME, log_to_rows(data.get('log', [])))):
+        tab = resolve_tab(service, name)
+        if not tab:
+            raise RuntimeError(f'Tab "{name}" not found in the spreadsheet')
+        write_tab(service, tab, rows)
 
 
 def check_auth(auth_header):
@@ -219,15 +447,10 @@ class H(http.server.SimpleHTTPRequestHandler):
         if name not in PUBLIC_FILES or not os.path.isfile(name):
             self.send_error(404)
             return
+        if name == 'data/data.json':  # never expose the edit log publicly
+            return self.serve_app_data(include_log=False)
         with open(name, 'rb') as f:
             body = f.read()
-        if name == 'data/data.json':  # never expose the edit log publicly
-            try:
-                d = json.loads(body)
-                d['log'] = []
-                body = json.dumps(d).encode('utf-8')
-            except ValueError:
-                body = b'{}'
         self.send_response(200)
         self.send_header('Content-Type', PUBLIC_FILES[name])
         self.send_header('Content-Length', str(len(body)))
@@ -235,9 +458,23 @@ class H(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def serve_app_data(self, include_log):
+        data, source = get_app_data()
+        if not include_log:
+            data['log'] = []
+        body = json.dumps(data).encode('utf-8')
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('X-Data-Source', source)
+        self.send_header('Content-Length', str(len(body)))
+        self.send_header('Cache-Control', 'no-store')
+        self.end_headers()
+        self.wfile.write(body)
+
     def serve_pricing_csv(self):
         try:
-            body = get_pricing_csv().encode('utf-8')
+            text, source, error = load_pricing_csv()
+            body = text.encode('utf-8')
         except (GoogleAuthError, HttpError, httplib2.HttpLib2Error, OSError, RuntimeError, ValueError) as exc:
             message = f'Could not read pricing data from Google Sheets: {exc}'
             self.log_error('%s', message)
@@ -252,6 +489,9 @@ class H(http.server.SimpleHTTPRequestHandler):
             return
         self.send_response(200)
         self.send_header('Content-Type', 'text/csv; charset=utf-8')
+        self.send_header('X-Data-Source', source)
+        if error:
+            self.send_header('X-Data-Error', header_text(error))
         self.send_header('X-Google-Sheets-URL', f'https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/edit')
         self.send_header('Content-Length', str(len(body)))
         self.send_header('Cache-Control', 'no-store')
@@ -279,6 +519,8 @@ class H(http.server.SimpleHTTPRequestHandler):
             return
         if path == '/data/pricing_data.csv':
             return self.serve_pricing_csv()
+        if path == '/data/data.json':
+            return self.serve_app_data(include_log=True)
         super().do_GET()
 
     def do_POST(self):
@@ -292,8 +534,13 @@ class H(http.server.SimpleHTTPRequestHandler):
                     raise ValueError('Request must include CSV text')
                 rows = parse_pricing_csv(req['csv'])
                 json_text = req.get('json', '{}')
-                if not isinstance(json_text, str) or not isinstance(json.loads(json_text), dict):
+                app_data = json.loads(json_text) if isinstance(json_text, str) else None
+                if not isinstance(app_data, dict):
                     raise ValueError('Request must include a JSON object as text')
+                for key in ('projects', 'log'):
+                    items = app_data.get(key, [])
+                    if not isinstance(items, list) or not all(isinstance(i, dict) for i in items):
+                        raise ValueError(f'"{key}" must be a list of objects')
             except (
                 UnicodeDecodeError,
                 json.JSONDecodeError,
@@ -302,28 +549,35 @@ class H(http.server.SimpleHTTPRequestHandler):
                 self.send_error(400, str(exc))
                 return
 
+            local_error = google_error = None
+            try:  # data/ always gets a copy, so work is never lost when Google is down
+                write_local('data/pricing_data.csv', rows_to_csv_text(rows))
+                write_local('data/data.json', json_text)
+            except OSError as exc:
+                local_error = str(exc)
+                self.log_error('Could not save to data/: %s', exc)
             try:
                 save_pricing_rows(rows)
-            except (
-                GoogleAuthError,
-                HttpError,
-                httplib2.HttpLib2Error,
-                OSError,
-                RuntimeError,
-            ) as exc:
-                self.log_error('Could not save pricing data to Google Sheets: %s', exc)
-                self.send_error(502, 'Unable to save pricing data to Google Sheets')
+                save_app_data(app_data)
+            except (GoogleAuthError, HttpError, httplib2.HttpLib2Error, OSError, RuntimeError) as exc:
+                google_error = str(exc)
+                self.log_error('Could not save to Google Sheets: %s', exc)
+            if local_error and google_error:
+                self.send_error(500, 'Could not save to Google Sheets or to data/')
                 return
-            try:
-                with open('data/data.json', 'w', encoding='utf-8') as f:
-                    f.write(json_text)
-            except OSError as exc:
-                self.log_error('Could not save local application data: %s', exc)
-                self.send_error(500, 'Pricing saved, but local application data could not be saved')
-                return
+            if not google_error and not local_error:
+                saved_to, message = 'both', 'Saved'
+            elif local_error:
+                saved_to, message = 'google', 'Saved to Google Sheets only; data/ could not be written'
+            else:
+                saved_to = 'local'
+                message = 'Saved to data/ only; Google Sheets failed: ' + header_text(google_error)
+            body = message.encode('utf-8')
             self.send_response(200)
+            self.send_header('X-Saved-To', saved_to)
+            self.send_header('Content-Length', str(len(body)))
             self.end_headers()
-            self.wfile.write(b'Saved')
+            self.wfile.write(body)
         else:
             self.send_error(404)
 
