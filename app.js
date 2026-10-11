@@ -554,7 +554,7 @@ function cardText(p){
 const LIMIT = 5;
 function itemLi(l){
   return `<li><div class="lr"><span class="line-detail"><span class="line-name">${esc(l.it.name)}</span>
-      <span class="lm"><span class="qty-badge"><span class="badge-qty">${fmtN(l.qty)}×</span><span class="badge-price">${l.price == null ? '—' : moneyR(l.price)}</span></span> ${esc(l.r ? l.r.unit : '')}${l.it.mode === 'gb' && l.y ? ` · ${l.y} Gb each` : ''}</span></span>
+      <span class="lm"><span class="lc"><i class="sr">Qty</i><b>${fmtN(l.qty)}×</b></span><span class="lc"><i class="sr">Unit</i><b>${esc((l.r ? l.r.unit : '') || '—')}${l.it.mode === 'gb' && l.y ? ` · ${l.y} Gb each` : ''}</b></span><span class="lc"><i class="sr">Price</i><b>${l.price == null ? '—' : moneyR(l.price)}</b></span></span></span>
       <span class="line-total num">${l.price == null ? '—' : moneyR(l.line)}</span></div></li>`;
 }
 function showHtml(p){
@@ -575,15 +575,15 @@ function showHtml(p){
       <div class="pbr">${warn}<button class="lnk" data-pcopy title="Copy this card as plain text">Copy text</button></div></div>
       <div><h3>${esc(p.name || 'Untitled example')}</h3>${p.desc ? `<p class="desc">${esc(p.desc)}</p>` : ''}</div></div>
     <div class="pills">${pills}</div>
-    <div class="kpis"><div class="total"><span>Total</span><b>${p.items.length ? moneyR(c.total) : '—'}</b></div>
-      ${p.samples ? `<div class="samples"><span>Samples</span><b>${fmtN(p.samples)}</b></div>` : ''}
-      <div class="per"><span>Per sample</span><b>${p.items.length && c.per != null ? moneyR(c.per) : '—'}</b></div></div>
+    <div class="kpis"><div class="samples"><span>Samples</span><b>${p.samples ? fmtN(p.samples) : '—'}</b></div>
+      <div class="per"><span>Per sample</span><b>${p.items.length && c.per != null ? moneyR(c.per) : '—'}</b></div>
+      <div class="total"><span>Total</span><b>${p.items.length ? moneyR(c.total) : '—'}</b></div></div>
     <div class="data">${c.gb ? fmtN(c.gb) + ' Gb of data needed' : ''}</div>
     <ul>${lines}</ul>
   </article>`;
 }
 const markTrunc = () => document.querySelectorAll('.pc li').forEach(li => {
-  const t = [...li.querySelectorAll('.line-name,.lm')].some(e => e.scrollWidth > e.clientWidth + 1);
+  const t = [...li.querySelectorAll('.line-name,.lc b')].some(e => e.scrollWidth > e.clientWidth + 1);
   li.classList.toggle('trunc', t); if (t) li.tabIndex = 0; else li.removeAttribute('tabindex');
 });
 let truncRaf = 0;

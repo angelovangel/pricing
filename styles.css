@@ -137,9 +137,6 @@ input.ed.pname{font-weight:600;font-size:11.5px;height:36px}
 .pc .line-name{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .pc .line-total{align-self:center;flex:none;text-align:right;white-space:nowrap}
 .pc .lm{color:var(--lm);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.pc .lm .qty-badge{display:inline-grid;grid-template-columns:6ch 9ch;align-items:center;width:17ch;background:var(--chip);color:var(--accent);border-radius:5px;padding:1px 7px;font-size:12px;font-weight:700;margin-right:4px;letter-spacing:-.01em;font-variant-numeric:tabular-nums}
-.pc .lm .badge-qty{text-align:right;padding-right:1ch}
-.pc .lm .badge-price{text-align:right;white-space:nowrap}
 .pc .bar{height:4px;background:var(--bg);border-radius:4px;margin-top:6px;overflow:hidden}
 .pc .bar i{display:block;height:100%;background:var(--accent);border-radius:4px}
 .pc.empty{border-style:dashed;box-shadow:none;align-items:center;justify-content:center;min-height:170px;color:var(--muted);text-align:center;gap:4px;grid-row:span 5}
@@ -169,7 +166,7 @@ body.viewonly #projMode,body.viewonly #addProj,body.viewonly .ptop,body.viewonly
 .pc li.trunc:hover .lr,.pc li.trunc:focus-visible .lr{position:absolute;top:0;left:-8px;right:-8px;min-height:var(--item-h);
   padding:8px 24px 8px 8px;background:var(--soft);border-radius:6px;box-shadow:0 6px 18px -6px rgba(27,42,34,.35)}
 .pc li.trunc:hover .line-name,.pc li.trunc:focus-visible .line-name,
-.pc li.trunc:hover .lm,.pc li.trunc:focus-visible .lm{white-space:normal;overflow:visible;text-overflow:clip;overflow-wrap:anywhere}
+.pc li.trunc:hover .lc b,.pc li.trunc:focus-visible .lc b{white-space:normal;overflow:visible;text-overflow:clip;overflow-wrap:anywhere}
 .pc li.trunc:focus-visible{outline:none}
 
 /* card actions */
@@ -235,3 +232,31 @@ button.btn.sm{padding:4px 10px;font-size:11.5px;white-space:nowrap}
 .kpis{gap:20px}
 .kpis .samples{margin-left:auto;text-align:right}
 .kpis .samples b{font-size:14px}
+
+/* item details as a small table: Qty | Unit | Price */
+.pc .lm{display:grid;grid-template-columns:44px minmax(0,1fr) 84px;gap:0 10px;margin-top:3px;white-space:normal;overflow:visible}
+.pc .lc{display:grid;min-width:0}
+.pc .lc i{font-style:normal;font-size:9.5px;line-height:1.25;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+.pc .lc b{font-size:12px;font-weight:550;color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
+.pc .line-total{align-self:flex-start}
+
+.pc .lc i.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+
+/* KPI order: Samples | Per sample | Total */
+.kpis{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;align-items:end}
+.kpis .samples,.kpis .per{text-align:left;margin-left:0}
+.kpis .total{text-align:right}
+
+/* item details use the header's type style; columns span the full row so they line up with the header */
+.pc .lr{display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:12px;row-gap:3px;align-items:center}
+.pc .line-detail{display:contents}
+.pc .line-name{grid-column:1}
+.pc .line-total{grid-column:2;align-self:start}
+.pc .lm{grid-column:1 / -1;margin-top:0}
+.pc .lc b{font-size:9.5px;font-weight:400;line-height:1.25;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+.pc .lc:nth-child(3) b{text-align:right}
+
+/* pin item cells to their rows: name + total on row 1, details on row 2 */
+.pc .line-name{grid-row:1}
+.pc .line-total{grid-row:1}
+.pc .lm{grid-row:2}
