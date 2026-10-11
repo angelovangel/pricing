@@ -512,9 +512,9 @@ function cardHtml(p){
         <input class="ed num" type="number" min="0" step="any" data-pl="n" value="${l.it.n}"${l.it.mode === 'gb' ? ' disabled' : ''}>
         <span data-out="lq${i}">${qtyText(l)}</span></div></div>`).join('');
   return `<article class="proj" data-pid="${p.id}">
-    <div class="ph"><input class="ed pname" data-pf="name" placeholder="Example name" value="${esc(p.name)}">
-      <button class="pb" data-pup aria-label="Move card up" title="Move up"${PROJECTS[0] === p ? ' disabled' : ''}>↑</button>
-      <button class="pb" data-pdown aria-label="Move card down" title="Move down"${PROJECTS[PROJECTS.length - 1] === p ? ' disabled' : ''}>↓</button>
+    <div class="ph"><span class="grip" draggable="true" tabindex="0" role="button" aria-label="Reorder card: drag, or use arrow keys" title="Drag to reorder">⋮⋮</span><input class="ed pname" data-pf="name" placeholder="Example name" value="${esc(p.name)}">
+      <button class="pb mv" data-pup aria-label="Move card up" title="Move up"${PROJECTS[0] === p ? ' disabled' : ''}>↑</button>
+      <button class="pb mv" data-pdown aria-label="Move card down" title="Move down"${PROJECTS[PROJECTS.length - 1] === p ? ' disabled' : ''}>↓</button>
       <button class="pb" data-pdup title="Duplicate this card">Duplicate</button>
       <button class="rm" data-pdel aria-label="Delete card">Delete</button></div>
     <input class="ed" data-pf="desc" placeholder="Short description (optional)" value="${esc(p.desc)}">
@@ -539,6 +539,7 @@ function qtyDesc(l){
   const unit = l.r ? l.r.unit : '';
   return `${fmtN(l.qty)} × ${l.price == null ? '—' : money(l.price)} ${unit}` + (l.it.mode === 'gb' && l.y ? ` · ${l.y} Gb each` : '');
 }
+const expanded = new Set();   // cards showing all their items (Show mode)
 const viewTier = new Map();   // per-card tier shown in Show mode; view only, never saved
 const viewCard = p => { const t = viewTier.has(p.id) ? viewTier.get(p.id) : p.tier; return t === p.tier ? p : {...p, tier: t, tierLost: undefined}; };
 function cardText(p){
@@ -550,27 +551,34 @@ function cardText(p){
   if (p.items.length){ L.push('', `Total: ${moneyR(c.total)}`); if (c.per != null) L.push(`Per sample: ${moneyR(c.per)}`); }
   return L.join('\n');
 }
+const LIMIT = 5;
+function itemLi(l){
+  return `<li><div class="lr"><span class="line-detail"><span class="line-name">${esc(l.it.name)}</span>
+      <span class="lm"><span class="qty-badge"><span class="badge-qty">${fmtN(l.qty)}×</span><span class="badge-price">${l.price == null ? '—' : moneyR(l.price)}</span></span> ${esc(l.r ? l.r.unit : '')}${l.it.mode === 'gb' && l.y ? ` · ${l.y} Gb each` : ''}</span></span>
+      <span class="line-total num">${l.price == null ? '—' : moneyR(l.line)}</span></div></li>`;
+}
 function showHtml(p){
   if (!hasContent(p)) return `<article class="pc empty" data-pid="${p.id}"><b>Empty example</b><span>Switch to Edit to fill it in</span></article>`;
-  const pv = viewCard(p), c = compute(pv), max = c.total || 1, multi = TIERS.length > 1;
-  const pills = [multi ? '' : pretty(TIERS[p.tier]),
+  const pv = viewCard(p), c = compute(pv), multi = TIERS.length > 1;
+  const pills = [multi ? '' : pretty(TIERS[p.tier]), p.samples ? `${fmtN(p.samples)} samples` : '',
     p.genome ? mbText(p.genome) + ' genome' : '', p.genome && p.cov ? `${fmtN(p.cov)}× coverage` : '']
     .filter(Boolean).map(t => `<span class="pill">${esc(t)}</span>`).join('');
-  const lines = c.lines.map(l => `<li><div class="lr"><span class="line-detail"><span class="line-name">${esc(l.it.name)}</span>
-      <span class="lm"><span class="qty-badge"><span class="badge-qty">${fmtN(l.qty)}×</span><span class="badge-price">${l.price == null ? '—' : moneyR(l.price)}</span></span> ${esc(l.r ? l.r.unit : '')}${l.it.mode === 'gb' && l.y ? ` · ${l.y} Gb each` : ''}</span></span>
-      <span class="line-total num">${l.price == null ? '—' : moneyR(l.line)}</span></div></li>`).join('');
+  // long lists are collapsed to the first LIMIT items
+  const ordered = c.lines, collapsed = ordered.length > LIMIT && !expanded.has(p.id);
+  const lines = (collapsed ? ordered.slice(0, LIMIT) : ordered).map(itemLi).join('') + (ordered.length > LIMIT ? `<li class="more"><button class="lnk" data-pmore aria-expanded="${!collapsed}">${
+    collapsed ? `+${ordered.length - LIMIT} more` : 'Show fewer'}</button></li>` : '');
+  const warn = c.warn.length ? `<span class="wbadge" tabindex="0" role="img" aria-label="${c.warn.length} warning${c.warn.length > 1 ? 's' : ''}">!<span class="wtip" role="tooltip">${
+    c.warn.map(w => `<span>${esc(w)}</span>`).join('')}</span></span>` : '';
   return `<article class="pc" data-pid="${p.id}">
     <div class="pch"><div class="pbar">${multi ? `<div class="seg sm" role="group" aria-label="Tier shown">${TIERS.map((t, i) =>
       `<button data-ptier="${i}" class="${i === pv.tier ? 'on' : ''}" aria-pressed="${i === pv.tier}">${esc(pretty(t))}</button>`).join('')}</div>` : ''}
-      <button class="lnk" data-pcopy title="Copy this card as plain text">Copy text</button></div>
+      <div class="pbr">${warn}<button class="lnk" data-pcopy title="Copy this card as plain text">Copy text</button></div></div>
       <div><h3>${esc(p.name || 'Untitled example')}</h3>${p.desc ? `<p class="desc">${esc(p.desc)}</p>` : ''}</div></div>
     <div class="pills">${pills}</div>
-    <div class="kpis"><div class="samples"><span>Samples</span><b>${p.samples ? fmtN(p.samples) : '—'}</b></div>
-      <div class="per"><span>Per sample</span><b>${p.items.length && c.per != null ? moneyR(c.per) : '—'}</b></div>
-      <div class="total"><span>Total</span><b>${p.items.length ? moneyR(c.total) : '—'}</b></div></div>
+    <div class="kpis"><div class="total"><span>Total</span><b>${p.items.length ? moneyR(c.total) : '—'}</b></div>
+      <div class="per"><span>Per sample</span><b>${p.items.length && c.per != null ? moneyR(c.per) : '—'}</b></div></div>
     <div class="data">${c.gb ? fmtN(c.gb) + ' Gb of data needed' : ''}</div>
     <ul>${lines}</ul>
-    <div class="pwarn">${esc(c.warn.join(' '))}</div>
   </article>`;
 }
 const markTrunc = () => document.querySelectorAll('.pc li').forEach(li => {
@@ -669,12 +677,56 @@ function refreshCard(art){
       if (f){ f.focus(); f.scrollIntoView({block: 'nearest'}); }
     }
   });
+  // drag to reorder (touch screens get the arrow buttons instead)
+  let dragPid = null;
+  const cols = () => getComputedStyle(pg).gridTemplateColumns.split(' ').length;
+  const clearDrop = () => pg.querySelectorAll('.drop-before,.drop-after,.dragging').forEach(el => el.classList.remove('drop-before', 'drop-after', 'dragging'));
+  pg.addEventListener('dragstart', e => {
+    const g = e.target.closest && e.target.closest('.grip'); if (!g) return;
+    const art = g.closest('.proj'); dragPid = +art.dataset.pid;
+    e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(dragPid));
+    if (e.dataTransfer.setDragImage) e.dataTransfer.setDragImage(art, 24, 18);
+    requestAnimationFrame(() => art.classList.add('dragging'));
+  });
+  pg.addEventListener('dragover', e => {
+    if (dragPid == null) return;
+    e.preventDefault(); e.dataTransfer.dropEffect = 'move';
+    pg.querySelectorAll('.drop-before,.drop-after').forEach(el => el.classList.remove('drop-before', 'drop-after'));
+    const t = e.target.closest('.proj'); if (!t || +t.dataset.pid === dragPid) return;
+    const r = t.getBoundingClientRect(), after = cols() === 1 ? e.clientY > r.top + r.height / 2 : e.clientX > r.left + r.width / 2;
+    t.classList.add(after ? 'drop-after' : 'drop-before');
+  });
+  pg.addEventListener('drop', e => {
+    if (dragPid == null) return;
+    e.preventDefault();
+    const t = e.target.closest('.proj'), from = PROJECTS.findIndex(p => p.id === dragPid);
+    if (t && from >= 0 && +t.dataset.pid !== dragPid){
+      const after = t.classList.contains('drop-after'), [m] = PROJECTS.splice(from, 1);
+      const to = PROJECTS.findIndex(p => p.id === +t.dataset.pid) + (after ? 1 : 0);
+      PROJECTS.splice(to, 0, m);
+      if (to !== from){ markDirty(); renderProjects(); }
+    }
+    dragPid = null; clearDrop();
+  });
+  pg.addEventListener('dragend', () => { dragPid = null; clearDrop(); });
+  pg.addEventListener('keydown', e => {
+    const g = e.target.closest && e.target.closest('.grip'); if (!g) return;
+    const dir = {ArrowUp: 'pup', ArrowLeft: 'pup', ArrowDown: 'pdown', ArrowRight: 'pdown'}[e.key]; if (!dir) return;
+    e.preventDefault();
+    const art = g.closest('.proj'), id = art.dataset.pid;
+    art.querySelector(`[data-${dir}]`).click();
+    const ng = document.querySelector(`.proj[data-pid="${id}"] .grip`); if (ng) ng.focus();
+  });
   // Show mode: tier toggle (view only) and copy as text
   pg.addEventListener('click', e => {
     const b = e.target.closest('button'), art = b && b.closest('.pc'); if (!art) return;
     const p = projById(+art.dataset.pid); if (!p) return;
     if (b.dataset.pcopy !== undefined){
       copyText(cardText(p)).then(() => showToast('Card copied as text'), () => showToast('Copy failed', true));
+    } else if (b.dataset.pmore !== undefined){
+      if (expanded.has(p.id)) expanded.delete(p.id); else expanded.add(p.id);
+      renderProjects();
+      const nb = document.querySelector(`.pc[data-pid="${p.id}"] [data-pmore]`); if (nb) nb.focus();
     } else if (b.dataset.ptier !== undefined){
       const t = +b.dataset.ptier;
       if (t === p.tier) viewTier.delete(p.id); else viewTier.set(p.id, t);
