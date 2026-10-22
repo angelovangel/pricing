@@ -89,6 +89,7 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money = n => CUR + n.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
 const moneyR = n => CUR + Math.round(n).toLocaleString();
+const moneyPer = n => n < 10 ? money(n) : moneyR(n);   // small per-sample prices keep their cents
 const pretty = t => t.replace(/_/g,' ');
 const saveCart = () => { try { localStorage.setItem('pricelist-cart', JSON.stringify(cart)); } catch(e) {} };
 let toastTimer;
@@ -548,7 +549,7 @@ function cardText(p){
   L.push([pretty(TIERS[pv.tier]), p.samples ? `${fmtN(p.samples)} samples` : '', p.genome ? mbText(p.genome) + ' genome' : '',
     p.genome && p.cov ? `${fmtN(p.cov)}× coverage` : '', c.gb ? `${fmtN(c.gb)} Gb of data needed` : ''].filter(Boolean).join(' · '), '');
   c.lines.forEach(l => L.push(`- ${l.it.name}: ${qtyDesc(l)} = ${l.price == null ? '—' : moneyR(l.line)}`));
-  if (p.items.length){ L.push('', `Total: ${moneyR(c.total)}`); if (c.per != null) L.push(`Per sample: ${moneyR(c.per)}`); }
+  if (p.items.length){ L.push('', `Total: ${moneyR(c.total)}`); if (c.per != null) L.push(`Per sample: ${moneyPer(c.per)}`); }
   return L.join('\n');
 }
 const LIMIT = 5;
@@ -576,7 +577,7 @@ function showHtml(p){
       <div><h3>${esc(p.name || 'Untitled example')}</h3>${p.desc ? `<p class="desc">${esc(p.desc)}</p>` : ''}</div></div>
     <div class="pills">${pills}</div>
     <div class="kpis"><div class="samples"><span>Samples</span><b>${p.samples ? fmtN(p.samples) : '—'}</b></div>
-      <div class="per"><span>Per sample</span><b>${p.items.length && c.per != null ? moneyR(c.per) : '—'}</b></div>
+      <div class="per"><span>Per sample</span><b>${p.items.length && c.per != null ? moneyPer(c.per) : '—'}</b></div>
       <div class="total"><span>Total</span><b>${p.items.length ? moneyR(c.total) : '—'}</b></div></div>
     <div class="data">${c.gb ? fmtN(c.gb) + ' Gb of data needed' : ''}</div>
     <ul>${lines}</ul>
