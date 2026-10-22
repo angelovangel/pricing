@@ -1,10 +1,9 @@
-@import url('https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400..700&family=Source+Serif+4:wght@600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400..700&display=swap');
 :root{
   --bg:#ecebe7; --panel:#fbfaf8; --ink:#1a1d24; --muted:#66645e; --line:#d8d6cf;
   --ink2:#43454c; --lm:#5c5a55; --chip:#e4e2dc; --err-bg:#fdf3ef; --flash:#1a1d24; --amber:#8f5a00; --amber-bg:#f8ecd0;
   --accent:#3a5372; --accent-ink:#ffffff; --soft:#e2e7ec; --warn:#a64a2a;
   --sans:"Source Sans 3","Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
-  --serif:"Source Serif 4",Georgia,"Times New Roman",serif;
   color-scheme:light;
 }
 *{box-sizing:border-box}
@@ -14,7 +13,7 @@ body{margin:0;background:var(--bg);color:var(--ink);
 header{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:22px 28px 14px}
 .hdr-actions{display:flex;gap:10px;align-items:center}
 [hidden]{display:none!important}
-h1{margin:0;font-family:var(--serif);font-size:24px;font-weight:600}
+h1{margin:0;font-size:24px;font-weight:650;letter-spacing:-.01em}
 .title-status{display:flex;align-items:center;gap:12px;min-width:0}
 .connection-status{margin:0;padding:3px 8px;border:1px solid var(--line);border-radius:999px;background:var(--panel);font-size:11.5px;line-height:1.35;white-space:nowrap}
 .connection-status.connecting{color:var(--muted)}
@@ -120,7 +119,7 @@ input.ed.pname{font-weight:600;font-size:12.5px;height:36px}
 .seg button.on{background:var(--accent);color:var(--accent-ink);font-weight:600}
 .pc{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:20px 22px;display:flex;flex-direction:column;gap:14px;
   }
-.pc h3{margin:0;font-family:var(--serif);font-size:21px;font-weight:600}
+.pc h3{margin:0;font-size:20px;font-weight:650;letter-spacing:-.01em}
 .pc .desc{margin:3px 0 0;color:var(--muted);font-size:12.5px}
 .pills{display:flex;flex-wrap:wrap;gap:6px}
 .pill{background:var(--soft);color:var(--accent);border-radius:999px;padding:3px 11px;font-size:12px;font-weight:600}
