@@ -8,7 +8,9 @@ import io
 import math
 import os
 import sys
+import threading
 
+import google_auth_httplib2
 import httplib2
 from google.auth.exceptions import GoogleAuthError
 from google.oauth2 import service_account
@@ -24,6 +26,10 @@ SHEET_NAME = os.environ.get('GOOGLE_SHEET_NAME', 'Sheet1')
 CARDS_SHEET_NAME = os.environ.get('GOOGLE_CARDS_SHEET_NAME', 'cards')
 LOGS_SHEET_NAME = os.environ.get('GOOGLE_LOGS_SHEET_NAME', 'logs')
 SHEETS_SCOPE = 'https://www.googleapis.com/auth/spreadsheets'
+GOOGLE_TIMEOUT = float(os.environ.get('GOOGLE_TIMEOUT', '10'))  # seconds per Google call
+_SAVE_LOCK = threading.Lock()  # guards saves, pushes of unsynced data and refreshes of data/
+_SAVE_GEN = 0  # bumped on every save, so a load can tell its Google read may be stale
+UNSYNCED = 'data/.unsynced'  # present while data/ holds changes Google Sheets has not got
 
 
 def ensure_local_data_files():
@@ -41,15 +47,20 @@ def ensure_local_data_files():
 
 def write_local(path, text):
     os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
-    tmp = path + '.tmp'
+    tmp = f'{path}.{threading.get_ident()}.tmp'  # per thread: requests run concurrently
     with open(tmp, 'w', encoding='utf-8', newline='') as f:
         f.write(text)
     os.replace(tmp, path)
 
 
-def mirror_local(path, text):
-    """Keep data/ in step with what was just read from Google (best effort)."""
+def mirror_local(path, text, gen):
+    """Keep data/ in step with what was just read from Google (best effort). Skipped when data/
+    has unsynced changes, or a save started since the read (gen), so newer local work is kept."""
+    if not _SAVE_LOCK.acquire(blocking=False):
+        return
     try:
+        if gen != _SAVE_GEN or os.path.exists(UNSYNCED):
+            return
         try:
             with open(path, 'r', encoding='utf-8', newline='') as f:
                 if f.read() == text:
@@ -59,6 +70,30 @@ def mirror_local(path, text):
         write_local(path, text)
     except OSError as exc:
         print(f'Could not update local copy {path}: {exc}', file=sys.stderr)
+    finally:
+        _SAVE_LOCK.release()
+
+
+def push_unsynced():
+    """Send data/ to Google if an earlier save did not reach it. Returns the error, or ''."""
+    global _SAVE_GEN
+    if not os.path.exists(UNSYNCED):
+        return ''
+    with _SAVE_LOCK:
+        if not os.path.exists(UNSYNCED):  # another request pushed it meanwhile
+            return ''
+        _SAVE_GEN += 1
+        try:
+            with open('data/pricing_data.csv', 'r', encoding='utf-8', newline='') as f:
+                rows = parse_pricing_csv(f.read())
+            save_pricing_rows(rows)
+            save_app_data(read_local_app_data())
+            os.remove(UNSYNCED)
+        except (GoogleAuthError, HttpError, httplib2.HttpLib2Error, OSError, RuntimeError, ValueError) as exc:
+            print(f'Could not push unsynced local changes to Google Sheets: {exc}', file=sys.stderr)
+            return f'Local changes not yet synced to Google Sheets: {exc}'
+    print('Pushed unsynced local changes to Google Sheets', file=sys.stderr)
+    return ''
 
 
 def rows_to_csv_text(rows):
@@ -96,7 +131,8 @@ def get_sheets_service():
         )
     except (GoogleAuthError, OSError, ValueError) as exc:
         raise RuntimeError('Could not load the Google service-account credentials') from exc
-    return build('sheets', 'v4', credentials=credentials, cache_discovery=False)
+    http = google_auth_httplib2.AuthorizedHttp(credentials, http=httplib2.Http(timeout=GOOGLE_TIMEOUT))
+    return build('sheets', 'v4', http=http, cache_discovery=False)
 
 
 def get_pricing_csv():
@@ -133,7 +169,11 @@ def get_pricing_csv():
 
 def load_pricing_csv():
     """(text, source, error): Google when reachable, otherwise data/pricing_data.csv."""
+    gen = _SAVE_GEN
     try:
+        pending = push_unsynced()
+        if pending:
+            raise RuntimeError(pending)
         text = get_pricing_csv()
     except (GoogleAuthError, HttpError, httplib2.HttpLib2Error, OSError, RuntimeError, ValueError) as exc:
         try:
@@ -145,7 +185,7 @@ def load_pricing_csv():
             raise
         print(f'Google Sheets unavailable, serving data/pricing_data.csv: {exc}', file=sys.stderr)
         return local, 'local', str(exc)
-    mirror_local('data/pricing_data.csv', text)
+    mirror_local('data/pricing_data.csv', text, gen)
     return text, 'google', ''
 
 
@@ -159,6 +199,10 @@ def parse_pricing_csv(csv_text):
         raise ValueError('CSV must start with Service, Technology, Unit, and at least one price tier')
     rate_card_index = next(
         (index for index, header in enumerate(headers) if header.lower() == 'rate_card'),
+        None,
+    )
+    remarks_index = next(
+        (index for index, header in enumerate(headers) if header.lower() == 'remarks'),
         None,
     )
     result = [headers]
@@ -175,7 +219,7 @@ def parse_pricing_csv(csv_text):
                 if normalized not in ('true', 'false'):
                     raise ValueError(f'CSV row {line_number} must use true or false for Rate_card')
                 converted.append(normalized == 'true')
-            elif index >= 3:
+            elif index >= 3 and index != remarks_index:
                 if not value.strip():
                     converted.append('')
                 else:
@@ -376,9 +420,13 @@ def read_local_app_data():
 def get_app_data():  # returns (data, source)
     """Cards and log from the Google Sheet tabs. A tab with no header yet (never saved) or an
     unreachable Sheet falls back to the local data/data.json copy."""
+    gen = _SAVE_GEN
     data = read_local_app_data()
     source = 'local'
     try:
+        pending = push_unsynced()
+        if pending:
+            raise RuntimeError(pending)
         service = get_sheets_service()
         tabs = {key: resolve_tab(service, name)
                 for key, name in (('cards', CARDS_SHEET_NAME), ('logs', LOGS_SHEET_NAME))}
@@ -399,7 +447,7 @@ def get_app_data():  # returns (data, source)
         source = 'google'
         data.setdefault('projects', [])
         data.setdefault('log', [])
-        mirror_local('data/data.json', json.dumps(data))
+        mirror_local('data/data.json', json.dumps(data), gen)
     except (GoogleAuthError, HttpError, httplib2.HttpLib2Error, OSError, RuntimeError, ValueError) as exc:
         print(f'Could not read cards/logs from Google Sheets, using local copy: {exc}', file=sys.stderr)
     data.setdefault('projects', [])
@@ -549,19 +597,25 @@ class H(http.server.SimpleHTTPRequestHandler):
                 self.send_error(400, str(exc))
                 return
 
-            local_error = google_error = None
-            try:  # data/ always gets a copy, so work is never lost when Google is down
-                write_local('data/pricing_data.csv', rows_to_csv_text(rows))
-                write_local('data/data.json', json_text)
-            except OSError as exc:
-                local_error = str(exc)
-                self.log_error('Could not save to data/: %s', exc)
-            try:
-                save_pricing_rows(rows)
-                save_app_data(app_data)
-            except (GoogleAuthError, HttpError, httplib2.HttpLib2Error, OSError, RuntimeError) as exc:
-                google_error = str(exc)
-                self.log_error('Could not save to Google Sheets: %s', exc)
+            global _SAVE_GEN
+            with _SAVE_LOCK:  # one save at a time
+                _SAVE_GEN += 1
+                local_error = google_error = None
+                try:  # data/ always gets a copy, so work is never lost when Google is down
+                    write_local('data/pricing_data.csv', rows_to_csv_text(rows))
+                    write_local('data/data.json', json_text)
+                    write_local(UNSYNCED, '')  # cleared once Google has the same data
+                except OSError as exc:
+                    local_error = str(exc)
+                    self.log_error('Could not save to data/: %s', exc)
+                try:
+                    save_pricing_rows(rows)
+                    save_app_data(app_data)
+                    if os.path.exists(UNSYNCED):
+                        os.remove(UNSYNCED)
+                except (GoogleAuthError, HttpError, httplib2.HttpLib2Error, OSError, RuntimeError) as exc:
+                    google_error = str(exc)
+                    self.log_error('Could not save to Google Sheets: %s', exc)
             if local_error and google_error:
                 self.send_error(500, 'Could not save to Google Sheets or to data/')
                 return
@@ -571,7 +625,8 @@ class H(http.server.SimpleHTTPRequestHandler):
                 saved_to, message = 'google', 'Saved to Google Sheets only; data/ could not be written'
             else:
                 saved_to = 'local'
-                message = 'Saved to data/ only; Google Sheets failed: ' + header_text(google_error)
+                message = ('Saved to data/ only; it will be sent to Google Sheets when reachable. Google error: '
+                           + header_text(google_error))
             body = message.encode('utf-8')
             self.send_response(200)
             self.send_header('X-Saved-To', saved_to)
@@ -583,4 +638,5 @@ class H(http.server.SimpleHTTPRequestHandler):
 
 if __name__ == '__main__':
     ensure_local_data_files()
-    socketserver.TCPServer(('', 3811), H).serve_forever()
+    socketserver.ThreadingTCPServer.daemon_threads = True
+    socketserver.ThreadingTCPServer(('', 3811), H).serve_forever()

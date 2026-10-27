@@ -39,7 +39,8 @@ To authorize the server:
 
 The sheet's first row must start with `Service`, `Technology`, and `Unit`,
 followed by one or more price-tier columns. An optional `Rate_card` column
-accepts `true` or `false`; blank price cells mean the service is unavailable
+accepts `true` or `false`. An optional `Remarks` column holds free text that
+the page shows when hovering a service (marked with an "i" icon). Blank price cells mean the service is unavailable
 in that tier.
 
 ## Local application state

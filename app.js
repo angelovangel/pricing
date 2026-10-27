@@ -6,6 +6,26 @@ const state = {tier:0, tech:null, q:'', sort:{key:null, dir:1}, edit:false, pin:
 let cart = [];
 try { cart = JSON.parse(localStorage.getItem('pricelist-cart') || '[]'); } catch(e) {}
 
+// quoted fields may hold commas, quotes ("") and line breaks
+function parseCsv(text){
+  const rows = []; let row = [], cur = '', inQ = false;
+  for (let i = 0; i < text.length; i++){
+    const c = text[i];
+    if (inQ){
+      if (c === '"' && text[i+1] === '"'){ cur += '"'; i++; }
+      else if (c === '"') inQ = false;
+      else cur += c;
+    } else if (c === '"') inQ = true;
+    else if (c === ','){ row.push(cur); cur = ''; }
+    else if (c === '\n' || c === '\r'){
+      if (c === '\r' && text[i+1] === '\n') i++;
+      row.push(cur); rows.push(row); row = []; cur = '';
+    } else cur += c;
+  }
+  if (cur || row.length){ row.push(cur); rows.push(row); }
+  return rows;
+}
+
 async function loadData() {
   setConnectionStatus('connecting', 'Connecting to Google Sheets…');
   let sheetUrl = '';
@@ -20,29 +40,23 @@ async function loadData() {
     }
     DATA = await jRes.json();
     const csvText = await cRes.text();
-    const lines = csvText.split('\n').map(l => l.trim()).filter(l => l);
-    const headers = lines[0].split(',').map(h => h.replace(/^"|"$/g, '').replace(/""/g, '"'));
+    const lines = parseCsv(csvText).filter(r => r.some(v => v.trim()));
+    const headers = lines[0].map(h => h.trim());
     const rcIdx = headers.findIndex(h => h.toLowerCase() === 'rate_card');
-    TIERS = headers.slice(3).filter((_, i) => rcIdx === -1 || (i + 3) !== rcIdx);
+    const rmIdx = headers.findIndex(h => h.toLowerCase() === 'remarks');
+    const isTier = i => i >= 3 && i !== rcIdx && i !== rmIdx;
+    TIERS = headers.filter((_, i) => isTier(i));
     DATA.tiers = TIERS;
     ROWS = [];
     for(let i=1; i<lines.length; i++) {
-       const row = [];
-       let inQ = false, curr = '';
-       for(let j=0; j<lines[i].length; j++) {
-         const c = lines[i][j];
-         if(c === '"') inQ = !inQ;
-         else if(c === ',' && !inQ) { row.push(curr); curr=''; }
-         else curr += c;
-       }
-       row.push(curr);
-       const p = row.map(v => v.replace(/^"|"$/g, '').replace(/""/g, '"'));
+       const p = lines[i];
        let rate_card = true;
        if (rcIdx !== -1 && p.length > rcIdx) {
          rate_card = String(p[rcIdx]).toLowerCase().trim() === 'true';
        }
-       const rawPrices = p.slice(3).filter((_, idx) => rcIdx === -1 || (idx + 3) !== rcIdx);
-       ROWS.push({ id: i-1, service: p[0], tech: p[1], unit: p[2], rate_card, prices: rawPrices.map(x => x === '' ? null : Number(x)) });
+       const remarks = rmIdx !== -1 ? (p[rmIdx] || '').trim() : '';
+       const rawPrices = headers.map((_, idx) => p[idx] ?? '').filter((_, idx) => isTier(idx));
+       ROWS.push({ id: i-1, service: p[0], tech: p[1], unit: p[2], rate_card, remarks, prices: rawPrices.map(x => x === '' ? null : Number(x)) });
     }
     DATA.rows = ROWS;
     LOG = DATA.log = DATA.log || [];
@@ -152,7 +166,7 @@ function renderTable(){
     ${th('price', pretty(TIERS[ti]), 'r')}<th class="r q">Qty</th><th class="act"></th></tr></thead><tbody>` +
     list.map(({r,i}) => {
       const color = r.rate_card === false ? ' style="color:var(--warn);"' : '';
-      return `<tr${color}><td>${esc(r.service)}</td>${showTech?`<td class="unit">${esc(r.tech)}</td>`:''}
+      return `<tr${color}${rmkAttr(r)}><td>${esc(r.service)}${rmkIcon(r)}</td>${showTech?`<td class="unit">${esc(r.tech)}</td>`:''}
       <td class="unit">${esc(r.unit)}</td><td class="r num">${money(r.prices[ti])}</td>
       <td class="r q"><input class="qty num" type="number" min="1" step="1" value="1" id="q${i}" aria-label="Quantity for ${esc(r.service)}"></td>
       <td class="act"><button class="add" data-add="${i}">Add</button></td></tr>`;}).join('') +
@@ -167,7 +181,8 @@ function renderCart(){
   let total = 0;
   const items = cart.map((it,k) => {
     const lt = it.price * it.qty; total += lt;
-    return `<div class="item"><span class="n">${esc(it.service)}</span><span class="num">${money(lt)}</span>
+    const r = byId(it.row);
+    return `<div class="item"${rmkAttr(r)}><span class="n">${esc(it.service)}${rmkIcon(r)}</span><span class="num">${money(lt)}</span>
       <span class="m">${esc(pretty(TIERS[it.tier]))} · ${money(it.price)} ${esc(it.unit)}</span>
       <span class="ctl"><label>Qty <input class="qty num" type="number" min="1" step="1" value="${it.qty}" data-qty="${k}"></label>
       <button class="rm" data-rm="${k}">Remove</button></span></div>`;
@@ -302,7 +317,7 @@ function renderEditTable(){
   const inp = (attrs, val, cls) => `<input class="ed ${cls||''}" ${attrs} value="${esc(val)}">`;
   $('tbl').innerHTML = list.length ? `<div class="tbl-wrap"><table><thead><tr>${th('service','Service')}${th('tech','Technology')}${th('unit','Unit')}<th class="act">Rate Card</th>` +
     TIERS.map((t,i) => `<th class="r"><input class="ed tn num" data-tn="${i}" value="${esc(t)}" aria-label="Tier ${i+1} name"></th>`).join('') +
-    `<th class="act"></th></tr></thead><tbody>` +
+    `<th>Remarks</th><th class="act"></th></tr></thead><tbody>` +
     list.map(r => {
       const isRc = r.rate_card !== false;
       const rcStyle = isRc ? '' : ' style="color:var(--warn);"';
@@ -310,6 +325,7 @@ function renderEditTable(){
       `<td>${inp('data-f="tech" list="techlist"', r.tech)}</td><td>${inp('data-f="unit" list="unitlist"', r.unit)}</td>` +
       `<td class="act" style="text-align:center;"><input type="checkbox" data-f="rate_card" ${isRc ? 'checked' : ''}></td>` +
       TIERS.map((_,i) => `<td class="r"><input class="ed num pr" type="number" step="any" min="0" data-p="${i}" value="${r.prices[i]==null?'':r.prices[i]}" aria-label="Price, tier ${i+1}"></td>`).join('') +
+      `<td>${inp('data-f="remarks" placeholder="Remarks" aria-label="Remarks"', r.remarks || '', 'rmk-ed')}</td>` +
       `<td class="act"><button class="rm" data-del="${r.id}">Delete</button></td></tr>`;
     }).join('') +
     `</tbody></table></div>` : `<p class="note">No services match these filters.</p>`;
@@ -342,7 +358,7 @@ function syncCart(id, oldService){
 
 function addService(){
   const id = ROWS.reduce((m,r) => Math.max(m, r.id), -1) + 1;
-  ROWS.push({id, service:'', tech: state.tech || 'Other', unit:'', rate_card: true, prices: TIERS.map(() => null)});
+  ROWS.push({id, service:'', tech: state.tech || 'Other', unit:'', rate_card: true, remarks:'', prices: TIERS.map(() => null)});
   state.pin = id; state.q = ''; $('q').value = '';
   markDirty(); renderAll();
   const f = document.querySelector(`tr[data-id="${id}"] [data-f="service"]`);
@@ -356,16 +372,16 @@ function download(text, type, name){
 }
 function exportServices(){
   const q = v => '"' + String(v).replace(/"/g,'""') + '"';
-  const lines = [['Service','Technology','Unit',...TIERS, 'Rate_card'].map(q).join(',')];
+  const lines = [['Service','Technology','Unit',...TIERS, 'Rate_card', 'Remarks'].map(q).join(',')];
   ROWS.filter(r => r.service.trim()).forEach(r =>
-    lines.push([q(r.service), q(r.tech), q(r.unit), ...r.prices.map(p => p == null ? '' : p), q(r.rate_card !== false)].join(',')));
+    lines.push([q(r.service), q(r.tech), q(r.unit), ...r.prices.map(p => p == null ? '' : p), q(r.rate_card !== false), q(r.remarks || '')].join(',')));
   download(lines.join('\n'), 'text/csv', 'services.csv');
 }
 function exportExcelServices(){
   const esc = v => String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  let html = '<table><tr><th>Service</th><th>Technology</th><th>Unit</th>' + TIERS.map(t => '<th>'+esc(t)+'</th>').join('') + '</tr>';
+  let html = '<table><tr><th>Service</th><th>Technology</th><th>Unit</th>' + TIERS.map(t => '<th>'+esc(t)+'</th>').join('') + '<th>Remarks</th></tr>';
   ROWS.filter(r => r.service.trim()).forEach(r => {
-    html += '<tr><td>' + esc(r.service) + '</td><td>' + esc(r.tech) + '</td><td>' + esc(r.unit) + '</td>' + r.prices.map(p => '<td>'+(p==null?'':p)+'</td>').join('') + '</tr>';
+    html += '<tr><td>' + esc(r.service) + '</td><td>' + esc(r.tech) + '</td><td>' + esc(r.unit) + '</td>' + r.prices.map(p => '<td>'+(p==null?'':p)+'</td>').join('') + '<td>' + esc(r.remarks || '') + '</td></tr>';
   });
   html += '</table>';
   const tpl = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet><x:Name>Services</x:Name><x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions></x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]--></head><body>${html}</body></html>`;
@@ -375,9 +391,9 @@ function exportExcelServices(){
 // The page rewrites itself: same HTML, with the data block replaced by the current data.
 async function savePage(){
   const q = v => '"' + String(v).replace(/"/g,'""') + '"';
-  const csvLines = [['Service','Technology','Unit',...TIERS, 'Rate_card'].map(q).join(',')];
+  const csvLines = [['Service','Technology','Unit',...TIERS, 'Rate_card', 'Remarks'].map(q).join(',')];
   ROWS.filter(r => r.service.trim()).forEach(r =>
-    csvLines.push([q(r.service), q(r.tech), q(r.unit), ...r.prices.map(p => p == null ? '' : p), q(r.rate_card !== false)].join(',')));
+    csvLines.push([q(r.service), q(r.tech), q(r.unit), ...r.prices.map(p => p == null ? '' : p), q(r.rate_card !== false), q(r.remarks || '')].join(',')));
   const csvText = csvLines.join('\n');
   const jsonText = JSON.stringify({ log: LOG, projects: projectsForSave() });
   try {
@@ -418,7 +434,7 @@ document.addEventListener('change', e => {
     else v = el.value.trim();
     const was = r[ds.f]; r[ds.f] = v;
     if (ds.f !== 'rate_card') el.value = v;
-    const label = {service:'Service name', tech:'Technology', unit:'Unit', rate_card:'Rate Card'}[ds.f];
+    const label = {service:'Service name', tech:'Technology', unit:'Unit', rate_card:'Rate Card', remarks:'Remarks'}[ds.f];
     if (v !== was) addLog(ds.f === 'service' && !was ? 'Added' : 'Edited', r.service, label, was, v);
   } else if (ds.p != null){
     const n = el.value === '' ? null : Number(el.value);
@@ -553,10 +569,31 @@ function cardText(p){
   return L.join('\n');
 }
 const LIMIT = 5;
+
+// ---------- remarks: hovering (or focusing) an item with remarks shows them in one shared tooltip ----------
+const rmkAttr = r => r && r.remarks ? ` data-rmk="${esc(r.remarks)}"` : '';
+const rmkIcon = r => r && r.remarks ? `<span class="rmk" tabindex="0" role="img" aria-label="Remarks: ${esc(r.remarks)}">i</span>` : '';
+const rmkTip = Object.assign(document.createElement('div'), {id: 'rmktip', role: 'tooltip', hidden: true});
+document.body.appendChild(rmkTip);
+let rmkFor = null;
+function showRmk(el){
+  if (el === rmkFor) return;
+  rmkFor = el; rmkTip.textContent = el.dataset.rmk; rmkTip.hidden = false;
+  const a = (el.querySelector('.rmk') || el).getBoundingClientRect(), t = rmkTip.getBoundingClientRect();
+  const left = Math.max(8, Math.min(a.left + a.width / 2 - 16, innerWidth - t.width - 8));
+  const top = a.bottom + 6 + t.height > innerHeight - 8 ? a.top - 6 - t.height : a.bottom + 6;
+  rmkTip.style.left = left + 'px'; rmkTip.style.top = Math.max(8, top) + 'px';
+}
+function hideRmk(){ rmkFor = null; rmkTip.hidden = true; }
+document.addEventListener('mouseover', e => { const el = e.target.closest('[data-rmk]'); if (el) showRmk(el); else if (rmkFor) hideRmk(); });
+document.addEventListener('focusin', e => { const el = e.target.closest('[data-rmk]'); if (el) showRmk(el); else if (rmkFor) hideRmk(); });
+document.addEventListener('focusout', e => { if (rmkFor && !rmkFor.contains(e.relatedTarget)) hideRmk(); });
+addEventListener('scroll', () => { if (rmkFor) hideRmk(); }, true);
+document.documentElement.addEventListener('mouseleave', () => { if (rmkFor) hideRmk(); });
 function itemLi(l){
-  return `<li><div class="lr"><span class="line-detail"><span class="line-name">${esc(l.it.name)}</span>
+  return `<li${rmkAttr(l.r)}><div class="lr"><span class="line-detail"><span class="line-name">${esc(l.it.name)}</span>
       <span class="lm"><span class="lc"><i class="sr">Qty</i><b>${fmtN(l.qty)}×</b></span><span class="lc"><i class="sr">Unit</i><b>${esc((l.r ? l.r.unit : '') || '—')}${l.it.mode === 'gb' && l.y ? ` · ${l.y} Gb each` : ''}</b></span><span class="lc"><i class="sr">Price</i><b>${l.price == null ? '—' : moneyR(l.price)}</b></span></span></span>
-      <span class="line-total num">${l.price == null ? '—' : moneyR(l.line)}</span></div></li>`;
+      <span class="line-total num">${rmkIcon(l.r)}${l.price == null ? '—' : moneyR(l.line)}</span></div></li>`;
 }
 function showHtml(p){
   if (!hasContent(p)) return `<article class="pc empty" data-pid="${p.id}"><b>Empty example</b><span>Switch to Edit to fill it in</span></article>`;
